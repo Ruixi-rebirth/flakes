@@ -1,0 +1,4 @@
+result/
+nixos.*
+nixpkgs/
+/.nixd.nix 
