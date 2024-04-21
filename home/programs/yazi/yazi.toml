@@ -1,0 +1,70 @@
+[manager]
+layout = [2, 4, 3]
+sort_by = "modified"
+sort_sensitive = true
+sort_reverse = true
+sort_dir_first = true
+show_hidden = false
+show_symlink = true
+
+[preview]
+tab_size = 2
+max_width = 600
+max_height = 900
+cache_dir = ""
+
+[opener]
+folder = [
+  { run = 'open -R "$@"', desc = "Reveal in Finder" },
+  { run = '$EDITOR "$@"' },
+]
+archive = [{ run = 'unar "$1"', desc = "Extract here" }]
+text = [{ run = '$EDITOR "$@"', block = true }]
+image = [
+  { run = 'open "$@"', desc = "Open" },
+  { run = '''exiftool "$1"; echo "Press enter to exit"; read''', block = true, desc = "Show EXIF" },
+]
+video = [
+  { run = 'nvidia-offload mpv "$@"' },
+  { run = '''mediainfo "$1"; echo "Press enter to exit"; read''', block = true, desc = "Show media info" },
+]
+audio = [
+  { run = 'mpv "$@"' },
+  { run = '''mediainfo "$1"; echo "Press enter to exit"; read''', block = true, desc = "Show media info" },
+]
+fallback = [
+  { run = 'open "$@"', desc = "Open" },
+  { run = 'open -R "$@"', desc = "Reveal in Finder" },
+]
+
+[open]
+rules = [
+  { name = "*/", use = "folder" },
+
+  { mime = "text/*", use = "text" },
+  { mime = "image/*", use = "image" },
+  { mime = "video/*", use = "video" },
+  { mime = "audio/*", use = "audio" },
+  { mime = "inode/x-empty", use = "text" },
+
+  { mime = "application/json", use = "text" },
+  { mime = "*/javascript", use = "text" },
+
+  { mime = "application/zip", use = "archive" },
+  { mime = "application/gzip", use = "archive" },
+  { mime = "application/x-tar", use = "archive" },
+  { mime = "application/x-bzip", use = "archive" },
+  { mime = "application/x-bzip2", use = "archive" },
+  { mime = "application/x-7z-compressed", use = "archive" },
+  { mime = "application/x-rar", use = "archive" },
+
+  { mime = "*", use = "fallback" },
+]
+
+[tasks]
+micro_workers = 5
+macro_workers = 10
+bizarre_retry = 5
+
+[log]
+enabled = false
