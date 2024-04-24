@@ -106,6 +106,7 @@
       url = "github:nix-community/lanzaboote";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nixd.url = "github:nix-community/nixd";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     nvim-flake.url = "github:Ruixi-rebirth/nvim-flake";
     nur.url = "github:nix-community/NUR";

@@ -27,6 +27,11 @@ let
             editor using the {env}`EDITOR` environment variable.
           '';
         };
+
+        withNixLSP = mkOption {
+          type = types.bool;
+          default = true;
+        };
       };
 
       config = mkIf cfg.enable (mkMerge [
@@ -37,6 +42,12 @@ let
 
         (mkIf cfg.defaultEditor {
           home.sessionVariables.EDITOR = "nvim";
+        })
+
+        (mkIf cfg.withNixLSP {
+          home.packages = with pkgs;[
+            inputs.nixd.packages.${pkgs.system}.nixd
+          ];
         })
       ]);
     };
@@ -49,5 +60,6 @@ in
     package = inputs.nvim-flake.packages.${pkgs.system}.lazynvim;
     defaultEditor = true;
     enableFishIntegration = true;
+    withNixLSP = true;
   };
 }
