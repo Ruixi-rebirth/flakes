@@ -1806,11 +1806,11 @@
         "pre-commit-hooks": "pre-commit-hooks_2"
       },
       "locked": {
-        "lastModified": 1713963803,
-        "narHash": "sha256-h19zx6Lkfge6nck4Ojsk4IEJDChAgeD/uVMVbKr4YyI=",
+        "lastModified": 1713969819,
+        "narHash": "sha256-cn+MeyvDNzBS6uWfOju3dqWNDhGbZmBpsBQT34L4Pt0=",
         "owner": "Ruixi-rebirth",
         "repo": "nvim-flake",
-        "rev": "d67013cc284c52d911d399f53e9fe9f1e00c6e13",
+        "rev": "8707c0d8734927a0581c0d597b855bb55fd93ba4",
         "type": "github"
       },
       "original": {
