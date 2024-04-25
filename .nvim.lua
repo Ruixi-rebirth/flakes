@@ -1,4 +1,4 @@
-vim.o.number = false
+vim.o.number = true
 local nvim_lsp = require("lspconfig")
 nvim_lsp.nixd.setup({
 	cmd = { "nixd" },
