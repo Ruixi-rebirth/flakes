@@ -1,0 +1,94 @@
+global {
+    # The WAN interface to bind. Use it if you want to proxy localhost.
+    # Multiple interfaces split by ",". Use "auto" to auto detect.
+    wan_interface: auto
+
+    log_level: info
+
+    # The LAN interface to bind. Use it if you want to proxy LAN.
+    # Multiple interfaces split by ",".
+    #lan_interface: docker0
+
+    auto_config_kernel_parameter: true
+
+    ##### Connecting options.
+
+    # Optional values of dial_mode are:
+    # 1. "ip". Dial proxy using the IP from DNS directly. This allows your ipv4, ipv6 to choose the optimal path
+    #       respectively, and makes the IP version requested by the application meet expectations. For example, if you
+    #       use curl -4 ip.sb, you will request IPv4 via proxy and get a IPv4 echo. And curl -6 ip.sb will request IPv6.
+    #       This may solve some wierd full-cone problem if your are be your node support that. Sniffing will be disabled
+    #       in this mode.
+    # 2. "domain". Dial proxy using the domain from sniffing. This will relieve DNS pollution problem to a great extent
+    #       if have impure DNS environment. Generally, this mode brings faster proxy response time because proxy will
+    #       re-resolve the domain in remote, thus get better IP result to connect. This policy does not impact routing.
+    #       That is to say, domain rewrite will be after traffic split of routing and dae will not re-route it.
+    # 3. "domain+". Based on domain mode but do not check the reality of sniffed domain. It is useful for users whose
+    #       DNS requests do not go through dae but want faster proxy response time. Notice that, if DNS requests do not
+    #       go through dae, dae cannot split traffic by domain.
+    # 4. "domain++". Based on domain+ mode but force to re-route traffic using sniffed domain to partially recover
+    #       domain based traffic split ability. It doesn't work for direct traffic and consumes more CPU resources.
+    dial_mode: domain
+}
+
+# See https://github.com/daeuniverse/dae/blob/main/docs/en/configuration/dns.md for full examples.
+dns {
+    upstream {
+        alidns: 'udp://dns.alidns.com:53'
+        googledns: 'tcp+udp://dns.google.com:53'
+    }
+    routing {
+        request {
+            fallback: alidns
+        }
+        response {
+            upstream(googledns) -> accept
+            !qname(geosite:cn) && ip(geoip:private) -> googledns
+            fallback: accept
+        }
+    }
+}
+
+# Node group (outbound).
+group {
+    proxy {
+        # No filter. Use all nodes.
+
+        # Randomly select a node from the group for every connection.
+        #policy: random
+
+        # Select the first node from the group for every connection.
+        #policy: fixed(0)
+
+        # Select the node with min last latency from the group for every connection.
+        #policy: min
+
+        # Select the node with min moving average of latencies from the group for every connection.
+        policy: min_moving_avg
+    }
+}
+
+# See https://github.com/daeuniverse/dae/blob/main/docs/en/configuration/routing.md for full examples.
+routing {
+    ### Preset rules.
+
+    # Network managers in localhost should be direct to avoid false negative network connectivity check when binding to
+    # WAN.
+    pname(NetworkManager, systemd-resolved, dnsmasq) -> must_direct
+
+    # Put it in the front to prevent broadcast, multicast and other packets that should be sent to the LAN from being
+    # forwarded by the proxy.
+    # "dip" means destination IP.
+    dip(224.0.0.0/3, 'ff00::/8') -> direct
+
+    # This line allows you to access private addresses directly instead of via your proxy. If you really want to access
+    # private addresses in your proxy host network, modify the below line.
+    dip(geoip:private) -> direct
+
+    ### Write your rules below.
+
+    dip(geoip:cn) -> direct
+    domain(geosite:cn) -> direct
+
+    fallback: proxy
+}
