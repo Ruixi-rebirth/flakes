@@ -8,11 +8,8 @@
     ../../terminals
     ../../programs
   ] ++ [
-    # ../../wm/sway
-    ../../wm/hyprland
+    ../../wm/sway
   ];
-
-  wayland.windowManager.hyprland = lib.mkIf config.wayland.windowManager.hyprland.enable { };
 
   wayland.windowManager.sway = lib.mkIf config.wayland.windowManager.sway.enable { extraOptions = [ "--unsupported-gpu" ]; };
 

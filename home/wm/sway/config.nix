@@ -4,10 +4,10 @@ let
     url = "https://raw.githubusercontent.com/Ruixi-rebirth/someSource/main/watermark/watermark2.png";
     sha256 = "sha256-q8wNjF7HAofZoRohnFpNLsd9kViuLGimtF9q7xloSgE=";
   };
-  grimshot_watermark = pkgs.writeShellScriptBin "grimshot_watermark" ''
+  grimblast_watermark = pkgs.writeShellScriptBin "grimblast_watermark" ''
         FILE=$(date "+%Y-%m-%d"T"%H:%M:%S").png
     # Get the picture from maim
-        ${pkgs.sway-contrib.grimshot}/bin/grimshot --notify  save area $HOME/Pictures/src.png >> /dev/null 2>&1
+        grimblast --notify --cursor save area $HOME/Pictures/src.png >> /dev/null 2>&1
     # add shadow, round corner, border and watermark
         convert $HOME/Pictures/src.png \
           \( +clone -alpha extract \
@@ -21,10 +21,8 @@ let
     #
         composite -gravity Southeast "${watermark}" $HOME/Pictures/$FILE $HOME/Pictures/$FILE 
     #
-    # # Send the Picture to clipboard
         wl-copy < $HOME/Pictures/$FILE
-    #
-    # # remove the other pictures
+    #   remove the other pictures
         rm $HOME/Pictures/src.png $HOME/Pictures/output.png
   '';
   myswaylock = pkgs.writeShellScriptBin "myswaylock" ''
@@ -285,16 +283,15 @@ in
       bindsym $mod+Return exec $term
       bindsym $mod+Shift+Return exec kitty --class="termfloat"
 
-
       # quick start some applications
       bindsym $mod+m exec --no-startup-id              kitty --class="musicfox" --hold sh -c "musicfox"
       bindsym $mod+b exec --no-startup-id              nvidia-offload firefox
       bindsym $mod+Shift+d exec kitty --class="danmufloat" --hold sh -c "export TERM=xterm-256color && bili" 
       bindsym $mod+Shift+x exec --no-startup-id        ${myswaylock}/bin/myswaylock 
       bindsym $mod+t exec --no-startup-id              telegram-desktop
-      bindsym $mod+bracketleft  exec --no-startup-id   grimshot --notify  save area ~/Pictures/$(date "+%Y-%m-%d"T"%H:%M:%S_no_watermark").png
-      bindsym $mod+bracketright exec --no-startup-id   grimshot --notify  copy area 
-      bindsym $mod+a exec --no-startup-id              ${grimshot_watermark}/bin/grimshot_watermark
+      bindsym $mod+bracketleft  exec --no-startup-id   grimblast --notify --cursor  copysave area ~/Pictures/$(date "+%Y-%m-%d"T"%H:%M:%S_no_watermark").png 
+      bindsym $mod+bracketright exec --no-startup-id   grimblast --notify --cursor  copy area 
+      bindsym $mod+a exec --no-startup-id              ${grimblast_watermark}/bin/grimblast_watermark 
       bindsym Print exec --no-startup-id               flameshot_watermark 
       bindsym $mod+q exec --no-startup-id              qq --enable-features=UseOzonePlatform --ozone-platform=x11
 

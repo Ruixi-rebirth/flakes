@@ -1,4 +1,4 @@
-{ self, inputs, user, ... }:
+{ self, inputs, ... }:
 let
   # system-agnostic args
   module_args._module.args = {
@@ -21,7 +21,6 @@ in
               useUserPackages = true;
             };
           }
-          inputs.hyprland.nixosModules.default
           inputs.lanzaboote.nixosModules.lanzaboote
           inputs.impermanence.nixosModules.impermanence
           inputs.sops-nix.nixosModules.sops
