@@ -119,6 +119,7 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     sops-nix.url = "github:Mic92/sops-nix";
     treefmt-nix.url = "github:numtide/treefmt-nix";
+    mygo.url = "github:Ruixi-rebirth/mygo";
   };
 
   nixConfig = {
