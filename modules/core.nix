@@ -1,4 +1,4 @@
-{ pkgs, user, config, ... }:
+{ pkgs, user, config, lib, ... }:
 {
   # NOTE: https://github.com/Mic92/sops-nix#initrd-secrets
   sops.defaultSopsFile = ../secrets/secrets.yaml;
@@ -22,7 +22,10 @@
 
   networking = {
     networkmanager.enable = true;
-    firewall.allowedTCPPorts = [ 5173 1420 ];
+    firewall.allowedTCPPorts = [
+      22 #sshd
+      6600 #mpd
+    ];
     hosts = {
       "185.199.109.133" = [ "raw.githubusercontent.com" ];
       "185.199.111.133" = [ "raw.githubusercontent.com" ];
@@ -77,6 +80,7 @@
       killall
       socat
       sops
+      lsof
     ];
   };
   services.dbus.enable = true;

@@ -26,6 +26,10 @@
     mpd = {
       enable = true;
       musicDirectory = "~/Music";
+      network = {
+        listenAddress = "0.0.0.0";
+        port = 6600;
+      };
       extraConfig = ''
         audio_output {
                 type            "pipewire"
