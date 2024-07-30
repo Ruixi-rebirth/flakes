@@ -12,10 +12,12 @@ nvim_lsp.nixd.setup({
 			},
 			options = {
 				nixos = {
-					expr = '(builtins.getFlake ("git+file://" + toString ./.)).nixosConfigurations.k-on.options',
+					expr =
+					'let flake = builtins.getFlake ("git+file://" + toString ./.); in flake.nixosConfigurations.k-on.options // flake.nixosConfigurations.yu.options',
 				},
 				home_manager = {
-					expr = '(builtins.getFlake ("git+file://" + toString ./.)).homeConfigurations."ruixi@k-on".options',
+					expr =
+					'let flake = builtins.getFlake ("git+file://" + toString ./.); in flake.homeConfigurations."ruixi@k-on".options // flake.homeConfigurations."ruixi@yu".options',
 				},
 				flake_parts = {
 					expr =

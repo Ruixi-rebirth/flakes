@@ -12,6 +12,7 @@ let
 
   homeImports = {
     "${user}@k-on" = [ ./k-on ] ++ sharedModules;
+    "${user}@yu" = [ ./yu ] ++ sharedModules;
   };
 
   inherit (inputs.home-manager.lib) homeManagerConfiguration;
@@ -26,6 +27,10 @@ in
     homeConfigurations = withSystem "x86_64-linux" ({ pkgs, ... }: {
       "${user}@k-on" = homeManagerConfiguration {
         modules = homeImports."${user}@k-on";
+        inherit pkgs;
+      };
+      "${user}@yu" = homeManagerConfiguration {
+        modules = homeImports."${user}@yu";
         inherit pkgs;
       };
     });

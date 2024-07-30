@@ -54,7 +54,7 @@
             # age-keygen -o ~/.config/sops/age/keys.txt
             # age-keygen -y ~/.config/sops/age/keys.txt
             # sudo mkdir -p /var/lib/sops-nix
-            # sudo cp ~/.config/sops/age/keys.txt /var/lib/sops-nix/key.txt
+            # sudo cp ~/.config/sops/age/keys.txt /var/lib/sops-nix/keys.txt
             # nvim $FLAKE_ROOT/.sops.yaml
             # mkdir $FLAKE_ROOT/secrets
             # sops $FLAKE_ROOT/secrets/secrets.yaml
@@ -119,6 +119,8 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     sops-nix.url = "github:Mic92/sops-nix";
     treefmt-nix.url = "github:numtide/treefmt-nix";
+    mygo.url = "github:Ruixi-rebirth/mygo";
+    nixos-wsl.url = "github:nix-community/NixOS-WSL";
   };
 
   nixConfig = {

@@ -1,9 +1,9 @@
-{ disks ? [ "/dev/nvme0n1" ], ... }: {
+{
   disko.devices = {
     disk = {
-      vdb = {
+      main = {
+        device = "/dev/nvme0n1";
         type = "disk";
-        device = builtins.elemAt disks 0;
         content = {
           type = "table";
           format = "gpt";
@@ -11,7 +11,7 @@
             {
               name = "ESP";
               start = "1MiB";
-              end = "512MiB";
+              end = "1025MiB";
               bootable = true;
               content = {
                 type = "filesystem";
@@ -24,8 +24,8 @@
             }
             {
               name = "luks";
-              start = "512MiB";
-              end = "100%";
+              start = "1025MiB";
+              end = "50%";
               content = {
                 type = "luks";
                 name = "crypted";

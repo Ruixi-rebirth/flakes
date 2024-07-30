@@ -1,5 +1,6 @@
 { inputs
 , sharedModules
+, wslModules
 , homeImports
 , user
 , ...
@@ -36,6 +37,19 @@
             ../modules/impermanence.nix
             ../modules/systemdboot.nix
           ] ++ sharedModules;
+      };
+      yu = nixosSystem {
+        specialArgs = { inherit user; };
+        modules =
+          [
+            ./yu
+            {
+              home-manager = {
+                extraSpecialArgs = { inherit user; };
+                users.${user}.imports = homeImports."${user}@yu";
+              };
+            }
+          ] ++ wslModules;
       };
     };
 }

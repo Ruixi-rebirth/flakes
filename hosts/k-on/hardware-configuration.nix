@@ -4,7 +4,7 @@
 { config, lib, pkgs, modulesPath, ... }:
 
 {
-  imports = [ (import ../../lib/disko_layout/single-device-luks.nix { }) ] ++
+  imports = [ ../../lib/disko_layout/single-device-luks.nix ] ++
     [
       (modulesPath + "/installer/scan/not-detected.nix")
     ];
@@ -22,7 +22,6 @@
   # networking.interfaces.enp65s0.useDHCP = lib.mkDefault true;
   # networking.interfaces.wlp0s20f3.useDHCP = lib.mkDefault true;
 
-  powerManagement.cpuFreqGovernor = lib.mkDefault "powersave";
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
   hardware.cpu.intel.updateMicrocode = lib.mkDefault config.hardware.enableRedistributableFirmware;
 }

@@ -5,13 +5,16 @@
       userName = "Ruixi-rebirth";
       userEmail = "ruixirebirth@gmail.com";
       signing = {
-        key = "D6FA49B594337867";
+        key = "847E32F6F2F1D108";
         signByDefault = true;
       };
       extraConfig = {
         url = {
-          "ssh://git@github.com:Ruixi-rebirth" = {
-            insteadOf = "https://github.com/Ruixi-rebirth/";
+          "ssh://git@github.com:" = {
+            insteadOf = "github:";
+          };
+          "https://github.com/" = {
+            insteadOf = "github:";
           };
         };
       };

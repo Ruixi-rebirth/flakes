@@ -16,7 +16,7 @@
   xdg.portal = {
     enable = true;
     wlr.enable = true;
-    configPackages = [ pkgs.gnome.gnome-session ];
+    configPackages = [ pkgs.gnome-session ];
     extraPortals = [ pkgs.xdg-desktop-portal-gtk pkgs.xdg-desktop-portal-wlr ];
   };
 
@@ -35,7 +35,7 @@
       wl-clipboard
       wlr-randr
       xorg.xeyes
-      cinnamon.nemo
+      nemo
       wev
       wf-recorder
       pulsemixer

@@ -21,6 +21,7 @@ folder = [
 archive = [{ run = 'unar "$1"', desc = "Extract here" }]
 text = [{ run = '$EDITOR "$@"', block = true }]
 image = [
+  { run = 'imv "$@"'},
   { run = 'open "$@"', desc = "Open" },
   { run = '''exiftool "$1"; echo "Press enter to exit"; read''', block = true, desc = "Show EXIF" },
 ]

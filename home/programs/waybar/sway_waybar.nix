@@ -1,10 +1,11 @@
-{ pkgs, ... }:
+{ pkgs, inputs, ... }:
 let
   sharedScripts = import ./share_scripts.nix { inherit pkgs; };
 in
 {
   programs.waybar = {
     enable = true;
+    # package = inputs.nixpkgs-wayland.packages.${pkgs.system}.waybar;
     systemd = {
       enable = false; # disable it,autostart it in sway conf
       target = "graphical-session.target";
@@ -146,6 +147,8 @@ in
       }
     '';
     settings = [{
+      mode = "dock";
+      start_hidden = false;
       modules-left = [
         "custom/launcher"
         "sway/workspaces"
@@ -219,7 +222,7 @@ in
         "interval" = 1;
         "format" = "{:%I:%M %p  %A %b %d}";
         "tooltip" = true;
-        "tooltip-format" = "{=%A; %d %B %Y}\n<tt>{calendar}</tt>";
+        "tooltip-format" = "<tt>{calendar}</tt>";
       };
       "memory" = {
         "interval" = 1;
@@ -248,7 +251,7 @@ in
       };
       "network" = {
         "interval" = 1;
-        "format-wifi" = "󰖩 {essid}";
+        "format-wifi" = "󰖩 {essid} ({ipaddr})";
         "format-ethernet" = "󰀂 {ifname} ({ipaddr})";
         "format-linked" = "󰖪 {essid} (No IP)";
         "format-disconnected" = "󰯡 Disconnected";

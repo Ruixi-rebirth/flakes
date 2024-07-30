@@ -1,11 +1,17 @@
 { pkgs, user, config, lib, ... }:
 {
+  programs.git.enable = true;
+
   # NOTE: https://github.com/Mic92/sops-nix#initrd-secrets
-  sops.defaultSopsFile = ../secrets/secrets.yaml;
-  sops.age.sshKeyPaths = [ ];
-  sops.gnupg.sshKeyPaths = [ ];
-  sops.age.keyFile = "/var/lib/sops-nix/key.txt"; # You must back up this keyFile yourself
-  sops.age.generateKey = true;
+  sops = {
+    defaultSopsFile = ../secrets/secrets.yaml;
+    gnupg.sshKeyPaths = [ ];
+    age = {
+      sshKeyPaths = [ ];
+      keyFile = "/var/lib/sops-nix/keys.txt"; # You must back up this keyFile yourself
+      generateKey = true;
+    };
+  };
   # issue: https://github.com/Mic92/sops-nix/issues/149
   # workaround:
   systemd.services.decrypt-sops = {
@@ -20,8 +26,12 @@
     script = config.system.activationScripts.setupSecrets.text;
   };
 
+  services.resolved.enable = true;
   networking = {
-    networkmanager.enable = true;
+    networkmanager = {
+      enable = true;
+      dns = "systemd-resolved";
+    };
     firewall.allowedTCPPorts = [
       22 #sshd
       6600 #mpd
@@ -50,11 +60,11 @@
     ];
   };
 
-  security.rtkit.enable = true;
   services = {
     openssh = {
       enable = true;
     };
+    dbus.enable = true;
   };
 
   environment = {
@@ -63,7 +73,6 @@
     systemPackages = with pkgs; [
       gcc
       clang
-      git
       gdb
       neovim
       wget
@@ -81,34 +90,38 @@
       socat
       sops
       lsof
+      rustscan
     ];
   };
-  services.dbus.enable = true;
 
   users.mutableUsers = false;
   users.users.root = {
-    initialHashedPassword = "$6$b7YjMXfdES4soCMc$UTQMG0Zft.fXs4q1aXp69z8/sfKkKWu8dt/ZN5oj5ifyJ/vIdMpiX09jQ1T8kRli3Pb2zMpPKvpxFfgHXzo9V0";
+    initialHashedPassword = "$6$lxmdznvXPgvRA.uq$R7Up1Eo1lrhaAbAGizrj/0dsbcU9DGKKVKLsA3bCrGYWkw/NkaQT.s41xTSqFkBZDXbucV00T2nN652D36AyG0";
   };
-  programs.fish.enable = true;
+  programs.fish.enable = lib.mkIf (config.networking.hostName != "minimal") true;
   users.users.${user} = {
-    initialHashedPassword = "$6$b7YjMXfdES4soCMc$UTQMG0Zft.fXs4q1aXp69z8/sfKkKWu8dt/ZN5oj5ifyJ/vIdMpiX09jQ1T8kRli3Pb2zMpPKvpxFfgHXzo9V0";
-    shell = pkgs.fish;
+    initialHashedPassword = "$6$lxmdznvXPgvRA.uq$R7Up1Eo1lrhaAbAGizrj/0dsbcU9DGKKVKLsA3bCrGYWkw/NkaQT.s41xTSqFkBZDXbucV00T2nN652D36AyG0";
+    shell = lib.mkIf (config.networking.hostName != "minimal") pkgs.fish or pkgs.bash;
+    uid = 1000;
     isNormalUser = true;
     extraGroups = [ "wheel" "video" "audio" ];
   };
 
-  security.polkit.enable = true;
-  security.sudo = {
-    enable = true;
-    extraConfig = ''
-      ${user} ALL=(ALL) NOPASSWD:ALL
-    '';
-  };
-  security.doas = {
-    enable = true;
-    extraConfig = ''
-      permit nopass :wheel
-    '';
+  security = {
+    polkit.enable = true;
+    rtkit.enable = true;
+    sudo = {
+      enable = true;
+      extraConfig = ''
+        ${user} ALL=(ALL) NOPASSWD:ALL
+      '';
+    };
+    doas = {
+      enable = true;
+      extraConfig = ''
+        permit nopass :wheel
+      '';
+    };
   };
 
   system.stateVersion = "23.11";

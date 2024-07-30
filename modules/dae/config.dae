@@ -1,3 +1,7 @@
+subscription {
+}
+node {
+}
 global {
     # The WAN interface to bind. Use it if you want to proxy localhost.
     # Multiple interfaces split by ",". Use "auto" to auto detect.

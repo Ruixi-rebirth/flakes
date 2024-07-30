@@ -157,7 +157,7 @@ in
       # Program Opacity #
       #-----------------#
       for_window [app_id="telegram"]                    opacity 0.95
-      for_window [app_id="danmufloat"]                    opacity 0.80
+      for_window [app_id="danmufloat"]                  opacity 0.80
 
       #------------------------------------------#
       # Placing software in a specific workspace #
@@ -176,7 +176,7 @@ in
       # Autostart #
       #-----------#
       exec_always  --no-startup-id  ${launch_waybar}/bin/launch_waybar &
-      exec_always  --no-startup-id  mako &
+      #exec_always  --no-startup-id  mako &
 
       #-------------------------------#
       # Make capslock work as escape #

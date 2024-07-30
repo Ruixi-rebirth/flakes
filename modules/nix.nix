@@ -5,7 +5,7 @@
     nixPath = [ "nixpkgs=${inputs.nixpkgs}" ];
     settings = {
       nix-path = lib.mkForce "nixpkgs=flake:nixpkgs";
-      experimental-features = [ "nix-command" "flakes" "auto-allocate-uids" "configurable-impure-env" "cgroups" ];
+      experimental-features = [ "nix-command" "flakes" "auto-allocate-uids" "cgroups" ];
       auto-allocate-uids = true;
       use-cgroups = true;
       auto-optimise-store = true; # Optimise syslinks
