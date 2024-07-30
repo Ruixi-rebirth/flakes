@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, inputs, ... }:
 let
   # Module definition
   myGoModule = { config, lib, ... }:
@@ -21,6 +21,11 @@ let
           example = "go/pkg/mod";
           description = "The Go mod cache path";
         };
+
+        withMyGo = mkOption {
+          type = types.bool;
+          default = true;
+        };
       };
 
       config = {
@@ -33,6 +38,10 @@ let
             GOMODCACHE = "${config.home.homeDirectory}/${cfg.goMODCACHE}";
           })
         ]);
+
+        home.packages = (mkIf cfg.withMyGo [
+          inputs.mygo.packages.${pkgs.system}.default
+        ]);
       };
     };
 in
@@ -44,5 +53,6 @@ in
     goPath = "Codelearning/go";
     goMODCACHE = "Codelearning/go/pkg/mod";
     go111MODULE = "on";
+    withMyGo = true;
   };
 }
