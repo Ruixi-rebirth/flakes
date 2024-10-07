@@ -91,6 +91,7 @@
       sops
       lsof
       rustscan
+      onefetch
     ];
   };
 
