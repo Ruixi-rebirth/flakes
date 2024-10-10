@@ -10,8 +10,8 @@
       };
       extraConfig = {
         url = {
-          "ssh://git@github.com:" = {
-            insteadOf = "github:";
+          "git@github.com:" = {
+            insteadOf = "gh:";
           };
           "https://github.com/" = {
             insteadOf = "github:";
