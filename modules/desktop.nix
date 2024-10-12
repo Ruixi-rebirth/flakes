@@ -34,6 +34,7 @@
       libnotify
       wl-clipboard
       wlr-randr
+      wlprop
       xorg.xeyes
       nemo
       wev
