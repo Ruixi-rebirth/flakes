@@ -166,6 +166,8 @@ in
       for_window [app_id="telegram"] focus
       for_window [app_id="musicfox"] move --no-auto-back-and-forth container to workspace 网易云
       for_window [app_id="musicfox"] focus
+      for_window [class="QQ"] move --no-auto-back-and-forth container to workspace QQ
+      for_window [class="QQ"] focus
 
       #---------------------#
       # Focus follows mouse #
