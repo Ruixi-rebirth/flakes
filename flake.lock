@@ -1930,11 +1930,11 @@
         "vim-translator": "vim-translator"
       },
       "locked": {
-        "lastModified": 1738083189,
-        "narHash": "sha256-u80K7vX4M7gMgy6Yncu0Eet9jl++o5O8admxJTqTg3A=",
+        "lastModified": 1738244278,
+        "narHash": "sha256-Fwyj35WtNhm+SNgfRCbCUcosy7XgpYBE2cqwNImu9A4=",
         "owner": "Ruixi-rebirth",
         "repo": "nvim-flake",
-        "rev": "2beb0614d79a61032725a57486a7255e2cdc466d",
+        "rev": "9bccfa618d4106d7838b17747e0a6b21431b315d",
         "type": "github"
       },
       "original": {
