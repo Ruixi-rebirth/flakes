@@ -72,7 +72,6 @@
         modules = [
           ./yu
           "${mod}/core"
-          "${mod}/core/sops.nix"
           "${mod}/nix"
           inputs.nixos-wsl.nixosModules.wsl
           inputs.sops-nix.nixosModules.sops
