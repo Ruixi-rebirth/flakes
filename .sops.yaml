@@ -1,0 +1,7 @@
+keys:
+  - &k-on age1s553573nwkpeejpcy2483q5v0rgwzngxp8uxrw6a2swepgqv4dxshc8ul5
+creation_rules:
+  - path_regex: secrets/[^/]+\.yaml$
+    key_groups:
+      - age:
+          - *k-on

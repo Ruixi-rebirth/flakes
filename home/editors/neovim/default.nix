@@ -1,0 +1,92 @@
+{
+  withGUI ? false,
+}:
+{
+  config,
+  lib,
+  pkgs,
+  inputs,
+  ...
+}:
+let
+  # Neovim Module definition
+  myNeovimModule =
+    { config, lib, ... }:
+    with lib;
+    let
+      cfg = config.programs.nvim;
+    in
+    {
+      options.programs.nvim = {
+        enable = mkEnableOption "Neovim";
+
+        enableFishIntegration = mkEnableOption "Fish integration";
+
+        enableBashIntegration = mkEnableOption "Bash integration";
+
+        package = mkOption {
+          type = types.package;
+          default = inputs.nvim-flake.packages.${pkgs.stdenv.hostPlatform.system}.nvim;
+          example = "inputs.nvim-flake.packages.${pkgs.stdenv.hostPlatform.system}.lazynvim";
+          description = "The Neovim package to use.";
+        };
+
+        defaultEditor = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Whether to configure {command}`nvim` as the default
+            editor using the {env}`EDITOR` environment variable.
+          '';
+        };
+
+        withNixLSP = mkOption {
+          type = types.bool;
+          default = true;
+        };
+
+        withGUI = mkOption {
+          type = types.bool;
+          default = false;
+        };
+      };
+
+      config = mkIf cfg.enable (mkMerge [
+        {
+          home.packages = [ cfg.package ] ++ (optional cfg.withGUI pkgs.neovide);
+          programs.fish.shellAliases = mkIf cfg.enableFishIntegration {
+            e = "nvim";
+            vi = "nvim";
+            vim = "nvim";
+          };
+          programs.bash.shellAliases = mkIf cfg.enableBashIntegration {
+            e = "nvim";
+            vi = "nvim";
+            vim = "nvim";
+          };
+        }
+
+        (mkIf cfg.defaultEditor {
+          home.sessionVariables.EDITOR = "nvim";
+        })
+
+        (mkIf cfg.withNixLSP {
+          home.packages = with pkgs; [
+            inputs.nixd.packages.${pkgs.stdenv.hostPlatform.system}.nixd
+          ];
+        })
+      ]);
+    };
+in
+{
+  imports = [ myNeovimModule ];
+
+  programs.nvim = {
+    enable = true;
+    defaultEditor = true;
+    enableFishIntegration = true;
+    enableBashIntegration = true;
+    withNixLSP = true;
+    inherit withGUI;
+  };
+}
