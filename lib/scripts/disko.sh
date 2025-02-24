@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+
+set -e
+
+# --- Configuration & Styling ---
+FLAKE_ROOT="${FLAKE_ROOT:-$(pwd)}"
+LAYOUT_DIR="$FLAKE_ROOT/lib/disko_layout"
+LUKS_KEY_FILE="/tmp/secret.key"
+
+# Colors
+GREEN='\e[1;32m'
+RED='\e[1;31m'
+YELLOW='\e[1;33m'
+BLUE='\e[1;34m'
+NC='\e[0m' # No Color
+
+# Helper Functions
+info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+error() {
+  echo -e "${RED}[ERROR]${NC} $1"
+  exit 1
+}
+success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+
+check_deps() {
+  for cmd in nix jq nvim lsblk nixos-generate-config; do
+    if ! command -v "$cmd" &>/dev/null; then
+      error "Missing required command: $cmd"
+    fi
+  done
+}
+
+ask_edit() {
+  local file="$1"
+  while true; do
+    read -p "Would you like to edit this layout? (y/n): " choice
+    [[ $choice == "y" ]] && nvim "$file" && break
+    [[ $choice == "n" ]] && break
+    warn "Invalid input, please enter 'y' or 'n'."
+  done
+}
+
+review_and_edit() {
+  local file="$1"
+  clear
+  echo -e "${GREEN}--- Reviewing Partition Layout: $(basename "$file") ---${NC}"
+  cat "$file" | less
+
+  while true; do
+    read -p "Edit this layout again? (y/n): " choice
+    [[ $choice == "y" ]] && nvim "$file" && break
+    [[ $choice == "n" ]] && break
+    warn "Invalid input."
+  done
+}
+
+# --- Execution Starts Here ---
+check_deps
+
+# 1. Host Discovery
+info "Scanning for NixOS configurations..."
+if ! hosts_json=$(nix --extra-experimental-features "nix-command flakes" flake show --json 2>/dev/null); then
+  error "Failed to discover NixOS configurations. Ensure 'nix flake show' runs successfully."
+fi
+hosts=($(echo "$hosts_json" | jq -r '.nixosConfigurations | keys[]'))
+
+if [ ${#hosts[@]} -eq 0 ]; then
+  error "No NixOS configurations found in flake or 'jq' failed to parse."
+fi
+
+echo -e "${BLUE}Select the target host configuration:${NC}"
+for i in "${!hosts[@]}"; do
+  echo "$((i + 1)). ${hosts[$i]}"
+done
+read -p "Choice (number): " host_idx
+[[ ! $host_idx =~ ^[0-9]+$ ]] || [ "$host_idx" -lt 1 ] || [ "$host_idx" -gt "${#hosts[@]}" ] && error "Invalid host choice."
+selected_host="${hosts[$((host_idx - 1))]}"
+
+# 2. Layout Discovery
+info "Scanning for disk layouts in $LAYOUT_DIR..."
+layouts=()
+while IFS= read -r -d $'\0' file; do
+  layouts+=("$file")
+done < <(find "$LAYOUT_DIR" -maxdepth 1 -name "*.nix" -print0)
+
+if [ ${#layouts[@]} -eq 0 ]; then
+  error "No layout files found in $LAYOUT_DIR."
+fi
+
+echo -e "${BLUE}Select a disk partition layout:${NC}"
+for i in "${!layouts[@]}"; do
+  echo "$((i + 1)). $(basename "${layouts[$i]}")"
+done
+read -p "Choice (number): " layout_idx
+[[ ! $layout_idx =~ ^[0-9]+$ ]] || [ "$layout_idx" -lt 1 ] || [ "$layout_idx" -gt "${#layouts[@]}" ] && error "Invalid layout choice."
+partition_layout="${layouts[$((layout_idx - 1))]}"
+
+# 3. Handle LUKS if applicable
+if [[ "$(basename "$partition_layout")" == *"luks"* ]]; then
+  echo -e "${RED}LUKS encryption detected. Please set the disk encryption password:${NC}"
+  while true; do
+    read -s -p "Enter LUKS password: " luks_pass
+    echo
+    read -s -p "Confirm LUKS password: " luks_pass_confirm
+    echo
+
+    if [ "$luks_pass" != "$luks_pass_confirm" ]; then
+      warn "Passwords do not match. Please try again."
+    else
+      echo -n "$luks_pass" >"$LUKS_KEY_FILE"
+      chmod 600 "$LUKS_KEY_FILE"
+      success "LUKS key prepared and confirmed."
+      break
+    fi
+  done
+fi
+
+# 4. Review & Final Confirmation
+ask_edit "$partition_layout"
+review_and_edit "$partition_layout"
+
+echo -e "${RED}--- CRITICAL: FINAL CONFIRMATION ---${NC}"
+echo -e "Target Host:   ${YELLOW}$selected_host${NC}"
+echo -e "Layout File:   ${YELLOW}$(basename "$partition_layout")${NC}"
+echo -e "Operation:     ${RED}WIPE DISK AND INSTALL PARTITIONS${NC}"
+warn "This action is IRREVERSIBLE. Ensure the device path in the Nix file is correct."
+read -p "Type 'YES' to proceed: " final_confirm
+[[ $final_confirm != "YES" ]] && error "Operation aborted by user."
+
+# 5. Run Disko
+info "Executing Disko..."
+
+nix --experimental-features "nix-command flakes" run github:nix-community/disko/latest -- --mode destroy,format,mount "$partition_layout"
+
+# 6. File System Preparation (Impermanence Support)
+info "Preparing mount points for $selected_host..."
+mkdir -p /mnt/etc/nixos
+mkdir -p /mnt/nix/persist/etc/nixos
+mount -o bind /mnt/nix/persist/etc/nixos /mnt/etc/nixos
+
+# 7. Hardware Configuration
+host_dir="$FLAKE_ROOT/hosts/$selected_host"
+mkdir -p "$host_dir"
+
+info "Generating hardware-configuration.nix for $selected_host..."
+nixos-generate-config --no-filesystems --root /mnt --dir "$host_dir"
+# The above command generates hardware-configuration.nix inside "$host_dir"
+
+# Patch hardware-configuration.nix to import the layout
+layout_filename="$(basename "$partition_layout")"
+relative_path="../../lib/disko_layout"
+layout_import_path="$relative_path/$layout_filename"
+
+# WARNING: Direct 'sed' modification of Nix files can be brittle.
+# Consider more robust Nix mechanisms or dynamically importing the disko layout.
+info "Patching hardware-configuration.nix with disko layout..."
+sed -i "/imports\ =/cimports\ = [\ $layout_import_path\ ]++" "$host_dir/hardware-configuration.nix"
+
+# 8. Copy Flake to Target
+info "Copying flake to /mnt/etc/nixos/flakes using rsync..."
+rsync -av --exclude='.git*' --exclude='result' --exclude='log' --exclude='.direnv*' --exclude='tmp*' --exclude='.*.swp' --exclude='.*.swo' "$FLAKE_ROOT/" /mnt/etc/nixos/flakes/
+
+# Cleanup sensitive data
+if [ -f "$LUKS_KEY_FILE" ]; then
+  rm "$LUKS_KEY_FILE"
+  info "Cleaned up temporary LUKS key."
+fi
+
+lsblk
+success "Disk preparation for $selected_host is COMPLETE!"
