@@ -1,0 +1,5 @@
+result/
+nixos.*
+nixpkgs/
+/.vscode
+myconfig.dae
