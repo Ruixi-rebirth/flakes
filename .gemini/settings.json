@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "flake-stats": {
+      "command": "flake-stats-mcp",
+      "args": []
+    }
+  }
+}
