@@ -115,6 +115,10 @@ in
       smart_borders on
       #smart_gaps on
 
+      # auto tiling (not smart)
+      for_window [tiling] splitt
+      default_orientation vertical
+
       #------------------------------#
       # Always float certain windows #
       #------------------------------#
