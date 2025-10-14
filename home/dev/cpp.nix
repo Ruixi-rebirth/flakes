@@ -26,7 +26,8 @@ let
 
       config = mkIf cfg.enable {
         home.packages = [
-        ] ++ cfg.extraPackages;
+        ]
+        ++ cfg.extraPackages;
       };
     };
 in

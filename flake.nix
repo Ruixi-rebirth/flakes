@@ -49,7 +49,7 @@
               ];
             };
             package = pkgs.treefmt;
-            programs.nixfmt-rfc-style.enable = true;
+            programs.nixfmt.enable = true;
             programs.prettier.enable = true;
             programs.shfmt.enable = true;
             programs.stylua = {

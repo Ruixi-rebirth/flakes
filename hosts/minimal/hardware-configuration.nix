@@ -10,11 +10,12 @@
 }:
 
 {
-  imports =
-    [ ../../lib/disko_layout/single-device-luks.nix ]
-    ++ [
-      (modulesPath + "/installer/scan/not-detected.nix")
-    ];
+  imports = [
+    ../../lib/disko_layout/single-device-luks.nix
+  ]
+  ++ [
+    (modulesPath + "/installer/scan/not-detected.nix")
+  ];
 
   boot.initrd.availableKernelModules = [
     "xhci_pci"

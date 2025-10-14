@@ -37,7 +37,8 @@ let
         home.packages = [
           cfg.nodePackage
           cfg.tsPackage
-        ] ++ cfg.extraPackages;
+        ]
+        ++ cfg.extraPackages;
       };
     };
 
