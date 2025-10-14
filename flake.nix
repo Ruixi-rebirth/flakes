@@ -155,6 +155,11 @@
     mygo.url = "github:Ruixi-rebirth/mygo";
     nixos-wsl.url = "github:nix-community/NixOS-WSL";
     go-musicfox.url = "github:go-musicfox/go-musicfox";
+    niri = {
+      url = "github:sodiboo/niri-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.rust-overlay.follows = "rust-overlay";
+    };
   };
 
   nixConfig = {

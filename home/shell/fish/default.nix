@@ -8,6 +8,11 @@
           set TTY1 (tty)
           [ "$TTY1" = "/dev/tty1" ] && exec sway
         ''
+      else if config.programs.niri.enable then
+        ''
+          set TTY1 (tty)
+          [ "$TTY1" = "/dev/tty1" ] && exec niri
+        ''
       else
         '''';
     interactiveShellInit = ''
