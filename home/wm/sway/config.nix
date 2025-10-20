@@ -116,8 +116,12 @@ in
       #smart_gaps on
 
       # auto tiling (not smart)
-      for_window [tiling] splitt
-      default_orientation vertical
+      # for_window [tiling] splitt
+      # default_orientation vertical
+
+      # auto tiling (smart)
+      exec_always autotiling-rs -q &
+
 
       #------------------------------#
       # Always float certain windows #

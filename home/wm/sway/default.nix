@@ -9,6 +9,7 @@
   };
   home.packages = [
     inputs.hyprpicker.packages.${pkgs.system}.hyprpicker
+    inputs.autotiling-rs.packages.${pkgs.system}.autotiling-rs
   ]
   ++ (with pkgs; [
     swaylock-effects

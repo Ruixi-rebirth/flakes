@@ -155,6 +155,7 @@
     mygo.url = "github:Ruixi-rebirth/mygo";
     nixos-wsl.url = "github:nix-community/NixOS-WSL";
     go-musicfox.url = "github:go-musicfox/go-musicfox";
+    autotiling-rs.url = "github:Ruixi-rebirth/autotiling-rs";
   };
 
   nixConfig = {
