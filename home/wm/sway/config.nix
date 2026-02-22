@@ -167,8 +167,10 @@ in
       #------------------------------------------#
       for_window [app_id="telegram"] move --no-auto-back-and-forth container to workspace TG
       for_window [app_id="telegram"] focus
-      for_window [app_id="musicfox"] move --no-auto-back-and-forth container to workspace 网易云
-      for_window [app_id="musicfox"] focus
+      # for_window [app_id="musicfox"] move --no-auto-back-and-forth container to workspace Music
+      # for_window [app_id="musicfox"] focus
+      for_window [app_id="com.github.th_ch.youtube_music"] move --no-auto-back-and-forth container to workspace Music
+      for_window [app_id="com.github.th_ch.youtube_music"] focus
       for_window [app_id="QQ"] move --no-auto-back-and-forth container to workspace QQ
       for_window [app_id="QQ"] focus
 
@@ -291,7 +293,8 @@ in
       bindsym $mod+Shift+Return exec kitty --class="termfloat"
 
       # quick start some applications
-      bindsym $mod+m exec --no-startup-id              kitty --class="musicfox" --hold sh -c "musicfox"
+      # bindsym $mod+m exec --no-startup-id              kitty --class="musicfox" --hold sh -c "musicfox"
+      bindsym $mod+m exec --no-startup-id              pear-desktop
       bindsym $mod+b exec --no-startup-id              nvidia-offload firefox
       bindsym $mod+Shift+d exec kitty --class="danmufloat" --hold sh -c "export TERM=xterm-256color && bili"
       bindsym $mod+Shift+x exec --no-startup-id        ${myswaylock}/bin/myswaylock

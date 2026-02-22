@@ -36,5 +36,6 @@
     ".config/fish/functions/xdg-get.fish".text = import ./functions/xdg-get.nix;
     ".config/fish/functions/xdg-set.fish".text = import ./functions/xdg-set.nix;
     ".config/fish/functions/owf.fish".text = import ./functions/owf.nix;
+    ".config/fish/functions/cd.fish".text = import ./functions/cd.nix;
   };
 }

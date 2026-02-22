@@ -11,6 +11,7 @@
   home = {
     packages = with pkgs; [
       mpc
+      pear-desktop
     ];
   };
   programs = {

@@ -23,6 +23,9 @@
             insteadOf = "github:";
           };
         };
+	core = {
+          quotepath = false;
+	};
       };
       signing = {
         key = me.gitSignKey;

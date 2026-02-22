@@ -34,7 +34,7 @@
       wlr-randr
       wf-recorder
       wlprop
-      xorg.xeyes
+      xeyes
       nemo
       wev
       pulsemixer
@@ -48,6 +48,7 @@
       blender
       s-search
       gparted
+      android-tools
     ];
     variables.NIXOS_OZONE_WL = "1";
   };
@@ -70,7 +71,6 @@
     };
   };
 
-  programs.adb.enable = true;
   users.users.${me.userName}.extraGroups = [ "adbuser" ];
 
   systemd = {
