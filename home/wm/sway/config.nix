@@ -190,8 +190,7 @@ in
       # Autostart #
       #-----------#
       exec_always  --no-startup-id  ${launch_waybar}/bin/launch_waybar &
-      exec_always wl-paste --type text --watch cliphist store
-      exec_always wl-paste --type image --watch cliphist store
+      exec_always pkill wl-paste; wl-paste --watch cliphist store
       #exec_always  ${pkgs.autotiling}/bin/autotiling
       #exec_always  --no-startup-id  mako &
 

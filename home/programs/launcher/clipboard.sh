@@ -3,25 +3,24 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 THEME="$DIR/clipboard_theme.rasi"
 
-# Use Pango markup for styling
 # Clear option: Bold red, aligned left with the rest
-CLEAR_OPTION="<span foreground='#f38ba8'><b>󰎖  CLEAR ALL HISTORY</b></span>"
+CLEAR_OPTION="󰎖  CLEAR ALL HISTORY"
 # Separator: Heavier line with a brighter color (yellowish) to be clearly visible
-SEPARATOR="<span foreground='#f9e2af'>━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span>"
+SEPARATOR="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Use the -markup-rows flag directly in the rofi command
-# -u 0 marks the first line as "urgent" for potential theme highlights
+# Use -u 0 to mark first line as urgent, -a 1 for second line as active
 CHOICE=$( (
     echo "$CLEAR_OPTION"
     echo "$SEPARATOR"
     cliphist list
-) | rofi -dmenu -p "󰅍" -theme "$THEME" -markup-rows -u 0)
+) | rofi -dmenu -p "󰅍" -theme "$THEME" -u 0 -a 1)
 
 case "$CHOICE" in
     "$CLEAR_OPTION")
-        CONFIRM=$(echo -e "Yes\nNo" | rofi -dmenu -p "Clear all history?" -theme "$THEME")
+        CONFIRM=$(echo -e "Yes\nNo" | rofi -dmenu -p "Clear history and reset IDs?" -theme "$THEME")
         if [ "$CONFIRM" == "Yes" ]; then
             cliphist wipe
+            rm -rf ~/.cache/cliphist/
         fi
         ;;
     "$SEPARATOR"|"")

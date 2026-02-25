@@ -92,6 +92,32 @@ element {
   padding:                    6px 10px 6px 10px;
 }
 
+element urgent {
+  text-color:                 #f38ba8;
+}
+
+element active {
+  text-color:                 #f9e2af;
+}
+
+element selected {
+  background-color:           @se;
+  text-color:                 @fg;
+  border:                     0% 0% 0% 0%;
+  border-radius:              4px;
+  border-color:               @bg;
+}
+
+element selected.urgent {
+  background-color:           @se;
+  text-color:                 #f38ba8;
+}
+
+element selected.active {
+  background-color:           @se;
+  text-color:                 #f9e2af;
+}
+
 element-text {
   background-color:           @al;
   text-color:                 inherit;
@@ -101,12 +127,4 @@ element-text {
   margin:                     0% 0.25% 0% 0.25%;
   /* 尝试控制 Tab 宽度 */
   tab-stops:                  [ 45px ]; 
-}
-
-element selected {
-  background-color:           @se;
-  text-color:                 @fg;
-  border:                     0% 0% 0% 0%;
-  border-radius:              4px;
-  border-color:               @bg;
 }
