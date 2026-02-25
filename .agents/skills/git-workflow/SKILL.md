@@ -60,6 +60,7 @@ description: 标准化的代码暂存、提交（包含 GPG 签名）和推送�
    - 执行 `git push <remote> <branch>` 进行同步。
 
 ## 验证
+- **代码整洁**：提交前应运行 `nix fmt` 以确保代码符合格式规范。
+- **配置有效**：建议在提交前运行 `nix flake check` 以验证 Flake 完整性。
+- **状态同步**：推送后运行 `git status` 以确保工作目录干净。
 
-- 推送后运行 `git status` 以确保工作目录干净。
-- 对于本项目，建议在提交前运行 `nix flake check`。
