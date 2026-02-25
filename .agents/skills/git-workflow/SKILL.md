@@ -38,14 +38,19 @@ description: 标准化的代码暂存、提交（包含 GPG 签名）和推送�
 
 ## 工作流程
 
-1. **分析**：使用 `git status` 和 `git diff` 了解更改内容。
+1. **同步与分析**：
+   - 执行 `git fetch` 检查远程更新。
+   - 使用 `git status` 了解本地与远程的同步状态（是否领先、落后或分叉）。
+   - 使用 `git diff` 确认具体更改内容。
 2. **暂存**：使用 `git add` 暂存相关文件。
 3. **生成提交**：
    - 确定合适的类型（如 `feat`, `fix`）。
    - 编写简短的摘要（最多 50 个字符）。
    - 如果更改复杂，添加详细的正文解释“为什么”。
-   - 执行 `git commit -m "<message>"`（并等待 GPG 验证）。
-4. **推送**：执行 `git push` 进行同步。
+   - 执行 `GPG_TTY=$(tty) git commit -m "<message>"`（并在出现提示时按 `Ctrl + f` 进行 GPG 认证）。
+4. **同步与推送**：
+   - 如果本地与远程分叉（Diverged），建议执行 `git pull --rebase` 以保持提交历史整洁。
+   - 执行 `git push` 进行同步。
 
 ## 验证
 - 推送后运行 `git status` 以确保工作目录干净。
