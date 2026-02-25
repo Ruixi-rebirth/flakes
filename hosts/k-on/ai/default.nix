@@ -12,5 +12,6 @@ in
       claude-code
       codex
       gemini-cli
-    ]++mcps;
+    ]
+    ++ mcps;
 }
