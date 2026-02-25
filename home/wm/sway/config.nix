@@ -26,21 +26,28 @@ let
         rm $HOME/Pictures/src.png $HOME/Pictures/output.png
   '';
   myswaylock = pkgs.writeShellScriptBin "myswaylock" ''
-    ${pkgs.swaylock-effects}/bin/swaylock  \
-           --screenshots \
-           --clock \
-           --indicator \
-           --indicator-radius 100 \
-           --indicator-thickness 7 \
-           --effect-blur 7x5 \
-           --effect-vignette 0.5:0.5 \
-           --ring-color 3b4252 \
-           --key-hl-color 880033 \
-           --line-color 00000000 \
-           --inside-color 00000088 \
-           --separator-color 00000000 \
-           --grace 2 \
-           --fade-in 0.3
+    ${pkgs.grim}/bin/grim /tmp/screen.png
+    ${pkgs.ffmpeg}/bin/ffmpeg -y -loglevel error -i /tmp/screen.png -vf "gblur=sigma=8,colorlevels=rimin=0.1:gimin=0.1:bimin=0.1" -update 1 -frames:v 1 /tmp/screen_blur.png
+    ${pkgs.swaylock}/bin/swaylock -i /tmp/screen_blur.png -s fill \
+      --indicator-radius 120 \
+      --indicator-thickness 10 \
+      --inside-color 2e344088 \
+      --ring-color 4c566a \
+      --key-hl-color 88c0d0 \
+      --bs-hl-color bf616a \
+      --text-color d8dee9 \
+      --separator-color 00000000 \
+      --line-uses-ring \
+      --inside-ver-color 81a1c1 \
+      --ring-ver-color 5e81ac \
+      --text-ver-color eceff4 \
+      --inside-wrong-color bf616a \
+      --ring-wrong-color d08770 \
+      --text-wrong-color eceff4 \
+      --inside-clear-color a3be8c \
+      --ring-clear-color 8fbcbb \
+      --text-clear-color 2e3440
+    rm /tmp/screen.png /tmp/screen_blur.png
   '';
   launch_waybar = pkgs.writeShellScriptBin "launch_waybar" ''
     killall .waybar-wrapped

@@ -11,7 +11,7 @@
     inputs.hyprpicker.packages.${pkgs.stdenv.hostPlatform.system}.hyprpicker
   ]
   ++ (with pkgs; [
-    swaylock-effects
+    swaylock
     sway-contrib.grimshot
     pamixer
     swayidle
