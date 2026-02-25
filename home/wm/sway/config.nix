@@ -190,6 +190,8 @@ in
       # Autostart #
       #-----------#
       exec_always  --no-startup-id  ${launch_waybar}/bin/launch_waybar &
+      exec_always wl-paste --type text --watch cliphist store
+      exec_always wl-paste --type image --watch cliphist store
       #exec_always  ${pkgs.autotiling}/bin/autotiling
       #exec_always  --no-startup-id  mako &
 
@@ -319,8 +321,11 @@ in
       # Start your launcher
       bindsym Super_L exec pkill rofi || ~/.config/rofi/launcher.sh
 
+      # Clipboard history
+      bindsym $mod+v exec pkill rofi ||  ~/.config/rofi/clipboard.sh
+
       # Start your powermenu
-      bindsym $mod+Super_L exec bash ~/.config/rofi/powermenu.sh
+      bindsym $mod+Super_L exec pkill rofi || bash ~/.config/rofi/powermenu.sh
 
       # Reload the configuration file
       bindsym $mod+Shift+c reload

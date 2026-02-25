@@ -31,6 +31,7 @@
     systemPackages = with pkgs; [
       libnotify
       wl-clipboard
+      cliphist
       wlr-randr
       wf-recorder
       wlprop
