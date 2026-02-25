@@ -163,7 +163,7 @@ in
           }
         }
       '';
-      extraConfig = '''';
+      extraConfig = "";
     };
   };
 

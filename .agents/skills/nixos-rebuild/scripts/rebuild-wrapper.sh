@@ -33,10 +33,13 @@ if [ -z "$HOST" ]; then
     echo "3. yu"
     read -p "Enter your choice (number): " -r choice
     case $choice in
-      1) HOST="k-on" ;;
-      2) HOST="minimal" ;;
-      3) HOST="yu" ;;
-      *) echo "Invalid choice"; exit 1 ;;
+    1) HOST="k-on" ;;
+    2) HOST="minimal" ;;
+    3) HOST="yu" ;;
+    *)
+      echo "Invalid choice"
+      exit 1
+      ;;
     esac
   fi
 fi

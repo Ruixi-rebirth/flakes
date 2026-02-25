@@ -38,7 +38,7 @@
 
   environment = {
     binsh = "${pkgs.dash}/bin/dash";
-    shells = with pkgs; [ fish ];
+    shells = [ pkgs.fish ];
     systemPackages = with pkgs; [
       nix-tree
       gcc

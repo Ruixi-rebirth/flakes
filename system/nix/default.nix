@@ -37,10 +37,6 @@
     };
     package = pkgs.nixVersions.latest;
     registry.nixpkgs.flake = inputs.nixpkgs;
-    extraOptions = ''
-      keep-outputs            = true
-      keep-derivations        = true
-    '';
   };
 
 }
