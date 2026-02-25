@@ -49,8 +49,9 @@ description: 标准化的代码暂存、提交（包含 GPG 签名）和推送�
    - 如果更改复杂，添加详细的正文解释“为什么”。
    - 执行 `GPG_TTY=$(tty) git commit -m "<message>"`（并在出现提示时按 `Ctrl + f` 进行 GPG 认证）。
 4. **同步与推送**：
+   - 执行 `git remote -v` 以确认远程仓库的别名（如 `origin`, `gh`）和对应的 URL。
    - 如果本地与远程分叉（Diverged），建议执行 `git pull --rebase` 以保持提交历史整洁。
-   - 执行 `git push` 进行同步。
+   - 执行 `git push <remote> <branch>` 进行同步。
 
 ## 验证
 - 推送后运行 `git status` 以确保工作目录干净。
