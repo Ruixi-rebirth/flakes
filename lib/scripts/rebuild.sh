@@ -29,18 +29,18 @@ fi
 
 echo "Which device do you want to rebuild?"
 for i in "${!hosts[@]}"; do
-  echo "$((i+1)). ${hosts[$i]}"
+  echo "$((i + 1)). ${hosts[$i]}"
 done
 
 read -p $'\e[1;32mEnter your choice (number): \e[0m' -r choice
 
 # Validate choice
-if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
+if [[ ! $choice =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
   echo "❌ Invalid choice, please try again."
   exit 1
 fi
 
-selected_host="${hosts[$((choice-1))]}"
+selected_host="${hosts[$((choice - 1))]}"
 
 # 4. Rebuild the selected host
 echo "🚀 Rebuilding $selected_host..."

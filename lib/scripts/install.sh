@@ -37,24 +37,24 @@ fi
 while true; do
   echo "The partition is now complete, please select the device you wish to install:"
   for i in "${!hosts[@]}"; do
-    echo "$((i+1)). ${hosts[$i]}"
+    echo "$((i + 1)). ${hosts[$i]}"
   done
 
   read -p $'\e[1;32mEnter your choice (number): \e[0m' -r choice
 
   # Validate choice
-  if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
+  if [[ ! $choice =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
     echo "❌ Invalid choice, please try again."
     continue
   fi
 
-  selected_host="${hosts[$((choice-1))]}"
-  
+  selected_host="${hosts[$((choice - 1))]}"
+
   # 2. Set password and update me.nix
   set_user_passwd
   echo "📝 Updating initialHashedPassword in me.nix..."
   sed -i "/initialHashedPassword/c\ \ \ \ initialHashedPassword\ =\ \"$passwd_hash\";" ./me.nix
-  
+
   # 3. Execute installation
   echo "🚀 Starting nixos-install for $selected_host..."
   nixos-install --no-root-passwd --flake ".#$selected_host"

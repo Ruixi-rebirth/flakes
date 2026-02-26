@@ -17,7 +17,10 @@ NC='\e[0m' # No Color
 # Helper Functions
 info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+error() {
+  echo -e "${RED}[ERROR]${NC} $1"
+  exit 1
+}
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 
 check_deps() {
@@ -32,8 +35,8 @@ ask_edit() {
   local file="$1"
   while true; do
     read -p "Would you like to edit this layout? (y/n): " choice
-    [[ "$choice" == "y" ]] && nvim "$file" && break
-    [[ "$choice" == "n" ]] && break
+    [[ $choice == "y" ]] && nvim "$file" && break
+    [[ $choice == "n" ]] && break
     warn "Invalid input, please enter 'y' or 'n'."
   done
 }
@@ -43,11 +46,11 @@ review_and_edit() {
   clear
   echo -e "${GREEN}--- Reviewing Partition Layout: $(basename "$file") ---${NC}"
   cat "$file" | less
-  
+
   while true; do
     read -p "Edit this layout again? (y/n): " choice
-    [[ "$choice" == "y" ]] && nvim "$file" && break
-    [[ "$choice" == "n" ]] && break
+    [[ $choice == "y" ]] && nvim "$file" && break
+    [[ $choice == "n" ]] && break
     warn "Invalid input."
   done
 }
@@ -65,11 +68,11 @@ fi
 
 echo -e "${BLUE}Select the target host configuration:${NC}"
 for i in "${!hosts[@]}"; do
-  echo "$((i+1)). ${hosts[$i]}"
+  echo "$((i + 1)). ${hosts[$i]}"
 done
 read -p "Choice (number): " host_idx
-[[ ! "$host_idx" =~ ^[0-9]+$ ]] || [ "$host_idx" -lt 1 ] || [ "$host_idx" -gt "${#hosts[@]}" ] && error "Invalid host choice."
-selected_host="${hosts[$((host_idx-1))]}"
+[[ ! $host_idx =~ ^[0-9]+$ ]] || [ "$host_idx" -lt 1 ] || [ "$host_idx" -gt "${#hosts[@]}" ] && error "Invalid host choice."
+selected_host="${hosts[$((host_idx - 1))]}"
 
 # 2. Layout Discovery
 info "Scanning for disk layouts in $LAYOUT_DIR..."
@@ -80,16 +83,16 @@ fi
 
 echo -e "${BLUE}Select a disk partition layout:${NC}"
 for i in "${!layouts[@]}"; do
-  echo "$((i+1)). $(basename "${layouts[$i]}")"
+  echo "$((i + 1)). $(basename "${layouts[$i]}")"
 done
 read -p "Choice (number): " layout_idx
-[[ ! "$layout_idx" =~ ^[0-9]+$ ]] || [ "$layout_idx" -lt 1 ] || [ "$layout_idx" -gt "${#layouts[@]}" ] && error "Invalid layout choice."
-partition_layout="${layouts[$((layout_idx-1))]}"
+[[ ! $layout_idx =~ ^[0-9]+$ ]] || [ "$layout_idx" -lt 1 ] || [ "$layout_idx" -gt "${#layouts[@]}" ] && error "Invalid layout choice."
+partition_layout="${layouts[$((layout_idx - 1))]}"
 
 # 3. Handle LUKS if applicable
 if [[ "$(basename "$partition_layout")" == *"luks"* ]]; then
   read -p $'\e[1;31mEnter LUKS password (will be stored in /tmp/secret.key): \e[0m' -r luks_pass
-  echo -n "$luks_pass" > "$LUKS_KEY_FILE"
+  echo -n "$luks_pass" >"$LUKS_KEY_FILE"
   chmod 600 "$LUKS_KEY_FILE"
   success "LUKS key prepared."
 fi
@@ -104,7 +107,7 @@ echo -e "Layout File:   ${YELLOW}$(basename "$partition_layout")${NC}"
 echo -e "Operation:     ${RED}WIPE DISK AND INSTALL PARTITIONS${NC}"
 warn "This action is IRREVERSIBLE. Ensure the device path in the Nix file is correct."
 read -p "Type 'YES' to proceed: " final_confirm
-[[ "$final_confirm" != "YES" ]] && error "Operation aborted by user."
+[[ $final_confirm != "YES" ]] && error "Operation aborted by user."
 
 # 5. Run Disko
 info "Executing Disko..."

@@ -3,11 +3,7 @@
 set -e
 
 # Detect sudo/doas
-if command -v doas &>/dev/null; then
-  SUDO=doas
-else
-  SUDO=sudo
-fi
+SUDO=sudo
 
 # 1. Validate the flake configuration
 echo "🔍 Validating flake configuration..."
@@ -41,7 +37,7 @@ HOST=$2
 # If host is not provided, try to detect it or ask
 if [ -z "$HOST" ]; then
   CURRENT_HOSTNAME=$(hostname)
-  
+
   # Check if current hostname is one of the hosts in the flake
   found=false
   for h in "${hosts[@]}"; do
@@ -56,14 +52,14 @@ if [ -z "$HOST" ]; then
   if [ "$found" == "false" ]; then
     echo "Which device do you want to rebuild?"
     for i in "${!hosts[@]}"; do
-      echo "$((i+1)). ${hosts[$i]}"
+      echo "$((i + 1)). ${hosts[$i]}"
     done
     read -p "Enter your choice (number): " -r choice
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
+    if [[ ! $choice =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
       echo "❌ Invalid choice"
       exit 1
     fi
-    HOST="${hosts[$((choice-1))]}"
+    HOST="${hosts[$((choice - 1))]}"
   fi
 fi
 
