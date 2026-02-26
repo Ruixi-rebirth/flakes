@@ -1,28 +1,47 @@
+#!/usr/bin/env bash
+
 set -e
 
+# Use doas if available, otherwise sudo
 if command -v doas &>/dev/null; then
   PAMT=doas
 else
   PAMT=sudo
 fi
 
-while true; do
-  echo "Which device do you want to rebuild?"
-  echo "1. k-on"
-  echo "2. minimal"
-  read -p $'\e[1;32mEnter your choice(number): \e[0m' -r device
+# 1. Validate the flake configuration
+echo "🔍 Validating flake configuration..."
+nix flake check
 
-  case $device in
-  1)
-    $PAMT nixos-rebuild switch --flake .#k-on
-    break
-    ;;
-  2)
-    $PAMT nixos-rebuild switch --flake .#minimal
-    break
-    ;;
-  *)
-    echo "Invalid choice, please try again."
-    ;;
-  esac
+# 2. Format the code
+echo "🎨 Formatting code..."
+nix fmt
+
+# 3. Dynamically discover hosts from flake
+echo "🕵️ Discovering hosts..."
+# Extracting keys from nixosConfigurations using nix flake show --json and jq
+hosts=($(nix flake show --json 2>/dev/null | jq -r '.nixosConfigurations | keys[]'))
+
+if [ ${#hosts[@]} -eq 0 ]; then
+  echo "❌ No NixOS configurations found in flake."
+  exit 1
+fi
+
+echo "Which device do you want to rebuild?"
+for i in "${!hosts[@]}"; do
+  echo "$((i+1)). ${hosts[$i]}"
 done
+
+read -p $'\e[1;32mEnter your choice (number): \e[0m' -r choice
+
+# Validate choice
+if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#hosts[@]}" ]; then
+  echo "❌ Invalid choice, please try again."
+  exit 1
+fi
+
+selected_host="${hosts[$((choice-1))]}"
+
+# 4. Rebuild the selected host
+echo "🚀 Rebuilding $selected_host..."
+$PAMT nixos-rebuild switch --flake ".#$selected_host"

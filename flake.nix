@@ -71,6 +71,7 @@
                 neovim
                 sbctl
                 just
+                jq
               ];
               inputsFrom = [
                 config.flake-root.devShell

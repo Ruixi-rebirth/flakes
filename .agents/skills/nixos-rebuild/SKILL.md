@@ -14,17 +14,17 @@ description: 使用 Flakes 进行 NixOS 系统构建和配置管理。当用户�
 立即应用更改并将其添加到引导加载程序（bootloader）中。
 
 ```bash
-sudo nixos-rebuild switch --flake .#<host>
+./.agents/skills/nixos-rebuild/scripts/rebuild-wrapper.sh switch [host]
 ```
 
-_本工作区中的主机: `k-on`, `minimal`, `yu`。_
+_脚本会自动从 Flake 中检测可用主机。_
 
 ### 2. 测试配置 (Test)
 
 将更改应用到当前运行的系统，但不添加到引导加载程序中。适用于有风险的更改。
 
 ```bash
-sudo nixos-rebuild test --flake .#<host>
+./.agents/skills/nixos-rebuild/scripts/rebuild-wrapper.sh test [host]
 ```
 
 ### 3. 下次启动时应用 (Boot)
@@ -32,7 +32,7 @@ sudo nixos-rebuild test --flake .#<host>
 将更改添加到引导加载程序，但不立即应用到当前运行的系统。
 
 ```bash
-sudo nixos-rebuild boot --flake .#<host>
+./.agents/skills/nixos-rebuild/scripts/rebuild-wrapper.sh boot [host]
 ```
 
 ### 4. 干跑 (Dry Activate)
@@ -40,15 +40,18 @@ sudo nixos-rebuild boot --flake .#<host>
 查看将应用哪些更改，而不实际执行。
 
 ```bash
-nixos-rebuild dry-activate --flake .#<host>
+./.agents/skills/nixos-rebuild/scripts/rebuild-wrapper.sh dry-activate [host]
 ```
 
-## 配置更新工作流
+## 配置更新工作流 (脚本自动化流程)
 
-1. **验证更改**：在重建之前，检查更改是否有效（例如运行 `nix flake check`）。
-2. **选择主机**：确定要重建的主机配置（`k-on`、`minimal` 或 `yu`）。
-3. **重建**：执行相应的 `nixos-rebuild` 命令。
-4. **验证**：重建后检查系统状态。
+脚本 `./.agents/skills/nixos-rebuild/scripts/rebuild-wrapper.sh` 已集成以下流程：
+
+1. **验证更改 (Validate)**：运行 `nix flake check` 检查配置有效性。
+2. **格式化代码 (Format)**：通过 `nix fmt` 确保代码风格统一。
+3. **选择主机 (Select Host)**：自动检测当前主机，若不匹配则提示从 Flake 定义中选择。
+4. **执行重建 (Rebuild)**：执行指定的 `nixos-rebuild` 子命令。
+5. **验证结果 (Verify)**：检查重建后的系统状态。
 
 ## 故障排除
 
@@ -62,6 +65,4 @@ nixos-rebuild dry-activate --flake .#<host>
 
 ## 主机特定说明
 
-- **k-on**：带有 Lanzaboote (Secure Boot) 和 Home Manager 的主要桌面系统。
-- **minimal**：最小化系统，无 Lanzaboote。
-- **yu**：基于 WSL 的系统。
+主机定义位于 `hosts/` 目录下，系统会动态解析 `flake.nix` 中的 `nixosConfigurations`。
