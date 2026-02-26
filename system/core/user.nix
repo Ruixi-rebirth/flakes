@@ -17,6 +17,8 @@
       "wheel"
       "video"
       "audio"
+      "kvm"
+      "libvirtd"
     ];
   };
 }

@@ -37,6 +37,9 @@
           "Projects"
           ".cabal"
           ".cargo"
+          ".android"
+          ".java"
+          ".android_sdk"
           ".gemini"
           {
             directory = ".gnupg";
