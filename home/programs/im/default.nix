@@ -5,6 +5,7 @@
       telegram-desktop
       qq
       wechat
+      feishu
       # nur.repos.linyinfeng.icalingua-plus-plus
       (vesktop.overrideAttrs (oldAttrs: {
         postFixup = oldAttrs.postFixup or "" + ''
