@@ -21,7 +21,7 @@
 - **Overlays**：提供 overlay 机制以便下游用户修改包定义。
 - **Attribute Sets vs. Lists**：优先使用属性集，因为它们比列表更容易通过合并进行扩展。
 
-## 常见反模式 (Anti-patterns)
+<h2>常见反模式 (Anti-patterns)</h2>
 
 - **死代码**：未引用的变量应使用 `_` 前缀或直接删除。
 - **嵌套过深**：将大型属性集拆分为多个子文件并通过 `imports` 组合。
@@ -35,6 +35,8 @@
 
 - **flake-parts GitHub Repository**: [https://github.com/hercules-ci/flake-parts](https://github.com/hercules-ci/flake-parts)
   - **描述**: `flake-parts` 是一个用于构建可组合、可扩展 Nix Flake 的框架。它提供了一种模块化的方式来定义和组合 Flake 的输出，非常适合大型或多主机配置项目。理解其模块系统、`perSystem` 和 `specialArgs` 的用法至关重要。
+- **flake.parts 官方文档**: [https://flake.parts/](https://flake.parts/)
+  - **描述**: `flake.parts` 的官方文档网站，提供了关于如何使用和理解 `flake-parts` 框架的详细指南、示例和最佳实践。这是学习和掌握 `flake-parts` 的主要资源。
 
 ### Nix 语言基础 (Nix Language Fundamentals)
 
@@ -49,5 +51,14 @@
 
 - **NixOS Manual**: [https://nixos.org/manual/nixos/unstable/](https://nixos.org/manual/nixos/unstable/)
   - **描述**: NixOS 系统的官方手册，详细解释了 NixOS 模块系统的运作方式、如何配置系统服务、硬件以及各种 NixOS 选项。
-- **Home Manager Manual**: [https://nixos.org/manual/home-manager/master/](https://nixos.org/manual/home-manager/master/)
-  - **描述**: Home Manager 的官方手册，介绍了如何使用 Home Manager 管理用户环境的配置，包括程序、点文件和 Shell 环境。理解其模块系统和选项对于管理用户配置至关重要。
+- **Home Manager Manual**: [https://nix-community.github.io/home-manager/](https://nix-community.github.io/home-manager/)
+  - **描述**: Home Manager 的官方手册，直接指向 `master` 分支的完整文档，提供了关于如何使用 Home Manager 管理用户环境配置的最新信息和详细指南。理解其模块系统和选项对于管理用户配置至关重要。
+- **Home Manager GitHub Repository**: [https://github.com/nix-community/home-manager](https://github.com/nix-community/home-manager)
+  - **描述**: Home Manager 的 GitHub 仓库，包含了其所有源代码。通过阅读其模块定义、测试和辅助函数，可以深入学习 Home Manager 的实现细节、设计模式和如何贡献。这对于理解大型 Nix 项目的结构和编写可扩展的 Nix 配置非常有帮助。
+
+### 探索 Nixpkgs 源代码 (Advanced)
+
+- **Nixpkgs `lib` 模块源代码**: [https://github.com/NixOS/nixpkgs/tree/master/lib](https://github.com/NixOS/nixpkgs/tree/master/lib)
+  - **描述**: Nixpkgs 的 `lib` 模块是 Nix 语言核心功能和实用函数的集合。直接阅读 `lib` 模块的源代码是理解 Nix 编程高级技巧、常用模式和函数实现细节的最佳方式。这对于编写高度模块化和可重用的 Nix 代码至关重要。你可以在这里找到 `lib.mkIf`, `lib.mkMerge`, `lib.attrsets` 等实用函数的定义和用法。
+- **Nixpkgs `pkgs` 目录源代码**: [https://github.com/NixOS/nixpkgs/tree/master/pkgs](https://github.com/NixOS/nixpkgs/tree/master/pkgs)
+  - **描述**: 这个目录包含了 NixOS 软件包集合的定义。通过查看 `pkgs` 目录中的源代码，你可以学习如何定义和打包软件、如何处理依赖关系以及如何为各种程序构建 Nix 表达式。这是理解 Nix 包管理实践的实践性参考。

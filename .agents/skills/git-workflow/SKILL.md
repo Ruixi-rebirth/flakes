@@ -56,7 +56,7 @@ description: 标准化的代码暂存、提交（包含 GPG 签名）和推送�
    - 确定合适的类型（如 `feat`, `fix`）。
    - 编写简短的摘要（最多 50 个字符）。
    - 如果更改复杂，添加详细的正文解释“为什么”。
-   - 执行 `GPG_TTY=$(tty) git commit -m "<message>"`（并在出现提示时按 `Ctrl + f` 进行 GPG 认证）。
+   - 执行 `GPG_TTY=$(tty) git commit -m "<message>"`进行 GPG 认证）。
 5. **同步与推送**：
    - 执行 `git remote -v` 以确认远程仓库的别名（如 `origin`, `gh`）和对应的 URL。
    - 如果本地与远程分叉（Diverged），建议执行 `git pull --rebase` 以保持提交历史整洁。
