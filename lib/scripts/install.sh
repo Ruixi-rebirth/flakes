@@ -2,10 +2,20 @@
 
 set -e
 
-# Change directory to the flake root (installer location)
+# Change directory to the flake root (installer location).
+# This script assumes the flake has been copied to /mnt/etc/nixos/flakes
+# as performed by the 'disko.sh' script.
+if [ ! -d "/mnt/etc/nixos/flakes" ]; then
+  echo "❌ Error: Flake not found at /mnt/etc/nixos/flakes. Please run 'disko.sh' first or ensure the flake is mounted correctly." >&2
+  exit 1
+fi
 cd /mnt/etc/nixos/flakes
 
 function set_user_passwd {
+  if ! command -v mkpasswd &>/dev/null; then
+    echo "❌ Error: 'mkpasswd' command not found. Cannot set user password." >&2
+    exit 1
+  fi
   echo $'\e[1;32mSet your user login password:\e[0m'
   while true; do
     read -s -p "Enter password: " user_pass
@@ -18,7 +28,10 @@ function set_user_passwd {
     else
       echo "Password confirmed."
       # mkpasswd is usually available in NixOS installer
-      passwd_hash=$(echo "$user_pass" | mkpasswd -m sha-512 -s 2>/dev/null)
+      passwd_hash=$(echo "$user_pass" | mkpasswd -m sha-512 -s || {
+        echo "❌ Error generating password hash." >&2
+        exit 1
+      })
       break
     fi
   done
@@ -27,10 +40,14 @@ function set_user_passwd {
 # 1. Dynamically discover hosts from flake
 echo "🕵️ Discovering hosts from flake..."
 # Note: We use --extra-experimental-features to ensure nix commands work in installer
-hosts=($(nix --extra-experimental-features "nix-command flakes" flake show --json 2>/dev/null | jq -r '.nixosConfigurations | keys[]'))
+if ! hosts_json=$(nix --extra-experimental-features "nix-command flakes" flake show --json 2>/dev/null); then
+  echo "❌ Error: 'nix flake show' failed in installer environment." >&2
+  exit 1
+fi
+hosts=($(echo "$hosts_json" | jq -r '.nixosConfigurations | keys[]'))
 
 if [ ${#hosts[@]} -eq 0 ]; then
-  echo "❌ No NixOS configurations found in flake."
+  echo "❌ No NixOS configurations found in flake or 'jq' failed to parse." >&2
   exit 1
 fi
 
@@ -52,6 +69,9 @@ while true; do
 
   # 2. Set password and update me.nix
   set_user_passwd
+  # WARNING: Direct 'sed' modification of Nix files can be brittle.
+  # Consider more robust Nix mechanisms like sops-nix for secrets,
+  # or passing configurations dynamically if possible.
   echo "📝 Updating initialHashedPassword in me.nix..."
   sed -i "/initialHashedPassword/c\ \ \ \ initialHashedPassword\ =\ \"$passwd_hash\";" ./me.nix
 

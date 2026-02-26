@@ -60,10 +60,13 @@ check_deps
 
 # 1. Host Discovery
 info "Scanning for NixOS configurations..."
-hosts=($(nix --extra-experimental-features "nix-command flakes" flake show --json 2>/dev/null | jq -r '.nixosConfigurations | keys[]'))
+if ! hosts_json=$(nix --extra-experimental-features "nix-command flakes" flake show --json 2>/dev/null); then
+  error "Failed to discover NixOS configurations. Ensure 'nix flake show' runs successfully."
+fi
+hosts=($(echo "$hosts_json" | jq -r '.nixosConfigurations | keys[]'))
 
 if [ ${#hosts[@]} -eq 0 ]; then
-  error "No NixOS configurations found in flake."
+  error "No NixOS configurations found in flake or 'jq' failed to parse."
 fi
 
 echo -e "${BLUE}Select the target host configuration:${NC}"
@@ -76,7 +79,11 @@ selected_host="${hosts[$((host_idx - 1))]}"
 
 # 2. Layout Discovery
 info "Scanning for disk layouts in $LAYOUT_DIR..."
-layouts=($(ls "$LAYOUT_DIR"/*.nix))
+layouts=()
+while IFS= read -r -d $'\0' file; do
+  layouts+=("$file")
+done < <(find "$LAYOUT_DIR" -maxdepth 1 -name "*.nix" -print0)
+
 if [ ${#layouts[@]} -eq 0 ]; then
   error "No layout files found in $LAYOUT_DIR."
 fi
@@ -120,26 +127,26 @@ mkdir -p /mnt/nix/persist/etc/nixos
 mount -o bind /mnt/nix/persist/etc/nixos /mnt/etc/nixos
 
 # 7. Hardware Configuration
-info "Generating hardware-configuration.nix..."
-nixos-generate-config --no-filesystems --root /mnt
-cd /mnt/etc/nixos
-
 host_dir="$FLAKE_ROOT/hosts/$selected_host"
 mkdir -p "$host_dir"
-cp hardware-configuration.nix "$host_dir/hardware-configuration.nix"
+
+info "Generating hardware-configuration.nix for $selected_host..."
+nixos-generate-config --no-filesystems --root /mnt --dir "$host_dir"
+# The above command generates hardware-configuration.nix inside "$host_dir"
 
 # Patch hardware-configuration.nix to import the layout
 layout_filename="$(basename "$partition_layout")"
 relative_path="../../lib/disko_layout"
 layout_import_path="$relative_path/$layout_filename"
 
+# WARNING: Direct 'sed' modification of Nix files can be brittle.
+# Consider more robust Nix mechanisms or dynamically importing the disko layout.
 info "Patching hardware-configuration.nix with disko layout..."
 sed -i "/imports\ =/cimports\ = [\ $layout_import_path\ ]++" "$host_dir/hardware-configuration.nix"
 
 # 8. Copy Flake to Target
-info "Copying flake to /mnt/etc/nixos/flakes..."
-mkdir -p /mnt/etc/nixos/flakes
-cp -r "$FLAKE_ROOT"/* /mnt/etc/nixos/flakes/
+info "Copying flake to /mnt/etc/nixos/flakes using rsync..."
+rsync -av --exclude='.git*' --exclude='result' --exclude='log' --exclude='.direnv*' --exclude='tmp*' --exclude='.*.swp' --exclude='.*.swo' "$FLAKE_ROOT/" /mnt/etc/nixos/flakes/
 
 # Cleanup sensitive data
 if [ -f "$LUKS_KEY_FILE" ]; then
