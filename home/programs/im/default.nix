@@ -6,6 +6,7 @@
       qq
       wechat
       feishu
+      wemeet
       # nur.repos.linyinfeng.icalingua-plus-plus
       (vesktop.overrideAttrs (oldAttrs: {
         postFixup = oldAttrs.postFixup or "" + ''

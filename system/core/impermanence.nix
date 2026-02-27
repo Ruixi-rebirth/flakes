@@ -39,7 +39,9 @@
           ".cargo"
           ".android"
           ".java"
+          ".javacpp"
           ".android_sdk"
+          ".gradle"
           ".gemini"
           {
             directory = ".gnupg";

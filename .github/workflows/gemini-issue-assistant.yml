@@ -66,10 +66,10 @@ jobs:
             const issueTitle = context.payload.issue.title;
             const issueBody = context.payload.issue.body || "";
             const commentBody = isComment ? context.payload.comment.body : "";
-            
+
             // Extract specific query from the command
             const userQuery = isComment ? commentBody.replace(/^\/ai\s*/, "").trim() : "Review this new issue.";
-            
+
             // Handle special debug command: /ai models
             if (isComment && userQuery.toLowerCase() === "models") {
               try {
@@ -107,7 +107,7 @@ jobs:
                 });
               } catch (e) { console.warn("Failed to add reaction:", e.message); }
             }
-            
+
             // Fetch ALL existing comments for full discussion context
             let threadContext = "";
             try {
@@ -127,17 +127,17 @@ jobs:
             }
 
             const repoContext = "Repository: Flakes (NixOS configuration). Structure: hosts/ (machines), home/ (user configs), system/ (core), pkgs/ (custom tools).";
-            
+
             const prompt = `You are a helpful Nix/NixOS expert. 
             Target Question/Task: ${userQuery}
-            
+
             Original Issue: ${issueTitle}
             Description: ${issueBody}
-            
+
             ${threadContext}
-            
+
             Repo Info: ${repoContext}
-            
+
             Instructions:
             - Analyze the FULL discussion history to provide an accurate answer.
             - If the problem was already solved in the history, summarize the solution.

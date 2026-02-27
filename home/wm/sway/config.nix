@@ -151,6 +151,14 @@ in
       for_window [app_id="flameshot"] border pixel 0, floating enable, fullscreen disable, move absolute position 0 0
       for_window [title="flameshot-pin"]                   floating enable
 
+      #-------------------------------------------#
+      # Meeting & Screen Sharing Adaptations      #
+      #-------------------------------------------#
+      for_window [instance="bytedance-feishu"] floating enable, border none
+      for_window [instance="Main_Meeting"] floating enable, border none
+      for_window [instance="ShareScreenFloatingPanelWindowBase"] floating enable, border none, sticky enable, focus_follows_mouse no, no_focus
+      for_window [app_id="wemeetapp"] floating enable, border none
+
       #-------------------------------------------------------#
       # Sticky floating windows(sticky enable|disable|toggle) #
       #-------------------------------------------------------#
