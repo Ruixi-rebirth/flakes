@@ -2006,11 +2006,11 @@
         "nixpkgs": "nixpkgs_14"
       },
       "locked": {
-        "lastModified": 1772169824,
-        "narHash": "sha256-KF4t5iagvmzUCT/ukiMbKg+hG+raFm+qs4zRWJouho8=",
+        "lastModified": 1772179126,
+        "narHash": "sha256-RhhBw9txtKsIvyoiA0E5VHVehQQfusnOEnN2Ef7DAAc=",
         "owner": "nix-community",
         "repo": "NUR",
-        "rev": "9d6c360577861a5218dbf453b84483075e6b56d2",
+        "rev": "7c6a36bf73e9e49f6c7afa20c2a7241494112e35",
         "type": "github"
       },
       "original": {

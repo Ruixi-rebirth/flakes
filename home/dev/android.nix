@@ -6,7 +6,7 @@
 let
   # Create a dedicated pkgs instance for Android SDK with accepted licenses
   androidPkgs = import pkgs.path {
-    inherit (pkgs) system;
+    inherit (pkgs.stdenv.hostPlatform) system;
     config = pkgs.config // {
       allowUnfree = true;
       android_sdk.accept_license = true;
