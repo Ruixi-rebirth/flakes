@@ -51,6 +51,9 @@
       NIX_ACCESS_TOKENS = {
         owner = "${me.userName}";
       };
+      GEMINI_API_KEY = {
+        owner = "${me.userName}";
+      };
     };
   };
   # issue: https://github.com/Mic92/sops-nix/issues/149
@@ -79,6 +82,7 @@
       export SSH_PVKEY="$(cat ${config.sops.secrets.SSH_PVKEY.path})"
       export GPG_PVKEY="$(cat ${config.sops.secrets.GPG_PVKEY.path})"
       export NIX_ACCESS_TOKENS="$(cat ${config.sops.secrets.NIX_ACCESS_TOKENS.path})"
+      export GEMINI_API_KEY="$(cat ${config.sops.secrets.GEMINI_API_KEY.path})"
     '';
   };
 
