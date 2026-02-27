@@ -1,4 +1,4 @@
-name: Gemini Issue Assistant (OpenCode Clone)
+name: Gemini Issue Assistant
 
 on:
   issues:
@@ -44,6 +44,18 @@ jobs:
             
             // Extract specific query from the command
             const userQuery = isComment ? commentBody.replace(/^\/ai\s*/, "").trim() : "Review this new issue.";
+            
+            // Add 'eyes' reaction to the comment for instant feedback
+            if (isComment) {
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: 'eyes'
+                });
+              } catch (e) { console.warn("Failed to add reaction:", e.message); }
+            }
             
             // Fetch ALL existing comments for full discussion context
             let threadContext = "";
