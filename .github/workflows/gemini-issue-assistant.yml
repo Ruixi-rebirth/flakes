@@ -30,6 +30,31 @@ jobs:
             console.log(`User: ${username}, Account age: ${isOldEnough ? '>= 30 days' : '< 30 days'}`);
             return isOldEnough;
 
+      - name: List Available Models (Debug)
+        if: steps.check.outputs.result == 'true'
+        uses: actions/github-script@v7
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          script: |
+            try {
+              const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
+              const response = await fetch(url);
+              const data = await response.json();
+              console.log("--- Available Gemini Models ---");
+              if (data.models) {
+                data.models.forEach(m => {
+                  console.log(`Model: ${m.name} (DisplayName: ${m.displayName})`);
+                  console.log(`  Supported Methods: ${m.supportedGenerationMethods.join(", ")}`);
+                });
+              } else {
+                console.log("No models found or error in response:", JSON.stringify(data));
+              }
+              console.log("-------------------------------");
+            } catch (err) {
+              console.error("Failed to list models:", err);
+            }
+
       - name: Gemini AI Processing
         if: steps.check.outputs.result == 'true'
         uses: actions/github-script@v7
@@ -45,6 +70,32 @@ jobs:
             // Extract specific query from the command
             const userQuery = isComment ? commentBody.replace(/^\/ai\s*/, "").trim() : "Review this new issue.";
             
+            // Handle special debug command: /ai models
+            if (isComment && userQuery.toLowerCase() === "models") {
+              try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                let modelListText = "🤖 **Available Gemini Models**\n\n| Model Name | Display Name | Methods |\n| :--- | :--- | :--- |\n";
+                if (data.models) {
+                  data.models.forEach(m => {
+                    modelListText += `| \`${m.name}\` | ${m.displayName} | ${m.supportedGenerationMethods.join(", ")} |\n`;
+                  });
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    body: modelListText
+                  });
+                } else {
+                  console.error("Failed to list models:", data);
+                }
+              } catch (err) {
+                console.error("List models error:", err);
+              }
+              return; // Exit after handling the models command
+            }
+
             // Add 'eyes' reaction to the comment for instant feedback
             if (isComment) {
               try {
