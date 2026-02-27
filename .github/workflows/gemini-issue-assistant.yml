@@ -1,0 +1,122 @@
+name: Gemini Issue Assistant (OpenCode Clone)
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  triage:
+    # Condition: Trigger on new issues OR comments starting with /oc or /opencode
+    if: |
+      github.event_name == 'issues' ||
+      (github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/oc') || startsWith(github.event.comment.body, '/opencode')))
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Check account age
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const username = context.payload.comment ? context.payload.comment.user.login : context.payload.issue.user.login;
+            const user = await github.rest.users.getByUsername({ username: username });
+            const createdAt = new Date(user.data.created_at);
+            const isOldEnough = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24) >= 30;
+            console.log(`User: ${username}, Account age: ${isOldEnough ? '>= 30 days' : '< 30 days'}`);
+            return isOldEnough;
+
+      - name: Gemini AI Processing
+        if: steps.check.outputs.result == 'true'
+        uses: actions/github-script@v7
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        with:
+          script: |
+            const isComment = context.eventName === 'issue_comment';
+            const issueTitle = context.payload.issue.title;
+            const issueBody = context.payload.issue.body || "";
+            const commentBody = isComment ? context.payload.comment.body : "";
+            
+            // Extract specific query from the command
+            const userQuery = isComment ? commentBody.replace(/^\/(oc|opencode)\s*/, "").trim() : "Review this new issue.";
+            
+            // Fetch ALL existing comments for full discussion context
+            let threadContext = "";
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              
+              if (comments.length > 0) {
+                threadContext = "\n--- Full Discussion History ---\n" + 
+                  comments.map(c => `${c.user.login}: ${c.body}`).join("\n\n") + 
+                  "\n--- End of History ---\n";
+              }
+            } catch (e) {
+              console.warn("Failed to fetch comments context:", e.message);
+            }
+
+            const repoContext = "Repository: Flakes (NixOS configuration). Structure: hosts/ (machines), home/ (user configs), system/ (core), pkgs/ (custom tools).";
+            
+            const prompt = `You are a helpful NixOS expert. 
+            Target Question/Task: ${userQuery}
+            
+            Original Issue: ${issueTitle}
+            Description: ${issueBody}
+            
+            ${threadContext}
+            
+            Repo Info: ${repoContext}
+            
+            Instructions:
+            - Analyze the FULL discussion history to provide an accurate answer.
+            - If the problem was already solved in the history, summarize the solution.
+            - Provide clear fixes or documentation links relevant to this NixOS repo.
+            - Match the user's language (e.g., reply in Chinese if they asked in Chinese).
+            - Keep it professional and concise. Use Markdown.`;
+
+            try {
+              // Using the high-performance model confirmed available for your account
+              const modelName = "models/gemini-2.5-flash";
+              const url = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+              
+              const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }]
+                })
+              });
+              
+              const data = await response.json();
+              if (data.candidates && data.candidates[0]) {
+                const aiText = data.candidates[0].content.parts[0].text;
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: "🤖 **Gemini AI Assistant**\n\n" + aiText + "\n\n---\n*Context-aware response powered by Gemini 2.5 Flash.*"
+                });
+                
+                // Add a label to indicate AI has participated
+                try {
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    labels: ['ai-replied']
+                  });
+                } catch (e) { console.log("Labeling failed or label already exists."); }
+              } else {
+                console.error("No AI response candidates. Data:", JSON.stringify(data));
+              }
+            } catch (err) {
+              console.error("Gemini API Error:", err);
+            }
