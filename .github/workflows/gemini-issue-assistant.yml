@@ -8,10 +8,10 @@ on:
 
 jobs:
   triage:
-    # Condition: Trigger on new issues OR comments starting with /oc or /opencode
+    # Trigger on new issues OR comments starting with /ai
     if: |
       github.event_name == 'issues' ||
-      (github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/oc') || startsWith(github.event.comment.body, '/opencode')))
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/ai'))
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -43,7 +43,7 @@ jobs:
             const commentBody = isComment ? context.payload.comment.body : "";
             
             // Extract specific query from the command
-            const userQuery = isComment ? commentBody.replace(/^\/(oc|opencode)\s*/, "").trim() : "Review this new issue.";
+            const userQuery = isComment ? commentBody.replace(/^\/ai\s*/, "").trim() : "Review this new issue.";
             
             // Fetch ALL existing comments for full discussion context
             let threadContext = "";
@@ -65,7 +65,7 @@ jobs:
 
             const repoContext = "Repository: Flakes (NixOS configuration). Structure: hosts/ (machines), home/ (user configs), system/ (core), pkgs/ (custom tools).";
             
-            const prompt = `You are a helpful NixOS expert. 
+            const prompt = `You are a helpful Nix/NixOS expert. 
             Target Question/Task: ${userQuery}
             
             Original Issue: ${issueTitle}
