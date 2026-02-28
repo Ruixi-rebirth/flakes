@@ -11,10 +11,10 @@
 
 ---
 
-step0:
+step0: Enter the nixos livecd environment
 
-```
-> Enter the nixos livecd environment
+```bash
+sudo -i
 ```
 
 step1:

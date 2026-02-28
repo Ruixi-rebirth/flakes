@@ -9,7 +9,7 @@
           type = "gpt";
           partitions = {
             ESP = {
-              size = "1024MiB";
+              size = "1G";
               type = "EF00";
               priority = 1;
               content = {

@@ -2,12 +2,7 @@
 
 set -e
 
-# Use doas if available, otherwise sudo
-if command -v doas &>/dev/null; then
-  PAMT=doas
-else
-  PAMT=sudo
-fi
+PAMT=sudo
 
 # 1. Validate the flake configuration
 echo "🔍 Validating flake configuration..."

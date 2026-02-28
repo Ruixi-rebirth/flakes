@@ -6,11 +6,10 @@
         device = "/dev/nvme0n1";
         type = "disk";
         content = {
-          type = "table";
-          format = "gpt";
+          type = "gpt";
           partitions = {
             ESP = {
-              size = "1024MiB";
+              size = "1024M";
               type = "EF00";
               priority = 1;
               content = {
