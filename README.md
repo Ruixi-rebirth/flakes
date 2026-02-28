@@ -1,4 +1,4 @@
-## 💡 Installation Suggestions
+#### 💡 Installation Suggestions
 
 - **Host Selection**:
   - `minimal`: **Highly recommended for initial installation.** It contains only the base system, making the process fast and stable. If you are installing NixOS (not WSL), please choose this first.
@@ -8,6 +8,16 @@
   - Recommended RAM: **> 8GB**.
   - **Reason**: In the NixOS Live environment, operations occur in RAM and Nix downloads many dependencies. Insufficient memory often leads to "No space left on device" errors.
   - **Suggestion**: If your RAM is limited, install the `minimal` configuration first. Once the system is successfully installed and booted, you can then switch to your final configuration (e.g., `k-on`) by running `just rebuild-switch`.
+
+---
+
+#### 📽️ Installation Demo
+
+![install_demo](./assets/install_demo.mp4)
+
+<div align="center">
+  <video src="/assets/install_demo.mp4" width="800px" controls autoplay loop muted></video>
+</div>
 
 ---
 
