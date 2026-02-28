@@ -7,7 +7,7 @@
 - **Hardware Requirements**:
   - Recommended RAM: **> 8GB**.
   - **Reason**: In the NixOS Live environment, operations occur in RAM and Nix downloads many dependencies. Insufficient memory often leads to "No space left on device" errors.
-  - **Suggestion**: If your RAM is limited, install the `minimal` configuration first. Once the system is successfully installed and booted, you can then switch to the full configuration.
+  - **Suggestion**: If your RAM is limited, install the `minimal` configuration first. Once the system is successfully installed and booted, you can then switch to your final configuration (e.g., `k-on`) by running `just rebuild-switch`.
 
 ---
 

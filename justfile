@@ -9,3 +9,7 @@ disko:
 install:
     echo "Running install script..."
     bash ./lib/scripts/install.sh
+
+rebuild-switch:
+    echo "Running rebuild script..."
+    bash ./lib/scripts/rebuild.sh
