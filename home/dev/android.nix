@@ -21,11 +21,13 @@ let
     buildToolsVersions = [
       "34.0.0"
       "35.0.0"
+      "36.0.0"
     ];
     includeEmulator = true;
     platformVersions = [
       "34"
       "35"
+      "36"
     ];
     includeSystemImages = true;
     systemImageTypes = [ "google_apis_playstore" ];
@@ -41,10 +43,6 @@ in
     androidSdk.androidsdk
     android-studio
     jdk17
-    # Graphics libraries required by the emulator
-    libGL
-    libxkbcommon
-    vulkan-loader
   ];
 
   home.sessionVariables = {
@@ -53,12 +51,7 @@ in
     JAVA_HOME = "${pkgs.jdk17}";
 
     # Fix aapt2 issue: Force Gradle to use the Nix-provided aapt2
-    # This solves "No such file or directory" errors when running ./gradlew on NixOS
     GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${aapt2Path}";
-
-    # Fix emulator graphics rendering and startup issues on NixOS
-    QT_X11_NO_MITSHM = "1";
-    LD_LIBRARY_PATH = "${pkgs.libGL}/lib:${pkgs.libxkbcommon}/lib:${pkgs.vulkan-loader}/lib";
   };
 
   # Automatically add platform-tools and emulator to PATH

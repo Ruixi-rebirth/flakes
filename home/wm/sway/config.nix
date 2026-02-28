@@ -148,6 +148,7 @@ in
       for_window [app_id="nemo"]                   floating enable
       for_window [app_id="nemo"]                   resize set height 540
       for_window [app_id="nemo"]                   resize set width 960
+      for_window [class="Emulator"]                   floating enable
       for_window [app_id="flameshot"] border pixel 0, floating enable, fullscreen disable, move absolute position 0 0
       for_window [title="flameshot-pin"]                   floating enable
 

@@ -9,9 +9,71 @@
     ./user.nix
   ];
 
-  programs.git.enable = true;
-
   programs.nix-ld.enable = true;
+  programs.nix-ld.libraries = with pkgs; [
+    stdenv.cc.cc
+    zlib
+    zstd
+    openssl
+    curl
+    expat
+    nss
+    nspr
+    icu
+    libssh
+    libxml2
+    libusb1
+    util-linux
+    systemd
+    libsodium
+    attr
+    xz
+    bzip2
+    acl
+    # Graphics and rendering libraries
+    libX11
+    libXext
+    libXdamage
+    libXfixes
+    libXcomposite
+    libXcursor
+    libXrender
+    libXrandr
+    libXi
+    libXtst
+    libXinerama
+    libXScrnSaver
+    libXv
+    libxkbcommon
+    libxkbfile
+    libxcb
+    libSM
+    libICE
+    libGL
+    pulseaudio
+    vulkan-loader
+    alsa-lib
+    dbus
+    glib
+    atk
+    at-spi2-atk
+    at-spi2-core
+    cairo
+    gdk-pixbuf
+    pango
+    gtk3
+    libpng
+    libbsd
+    fontconfig
+    freetype
+    libdrm
+    libgbm
+    mesa
+    wayland
+    udev
+  ];
+
+  programs.git.enable = true;
 
   time.timeZone = "Asia/Shanghai";
 

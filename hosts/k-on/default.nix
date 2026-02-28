@@ -92,6 +92,10 @@ in
     ];
 
   environment.variables = {
+    # SDL2 settings for Wayland and graphics
+    SDL_VIDEODRIVER = "wayland";
+    SDL_RENDER_DRIVER = "opengl";
+
     # WLR_RENDERER = "vulkan";
     __GLX_VENDOR_LIBRARY_NAME = "nvidia";
     GBM_BACKEND = "nvidia-drm";
