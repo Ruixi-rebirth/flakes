@@ -7,29 +7,29 @@ step0:
 step1:
 
 ```console
-$ nix run nixpkgs#git clone https://github.com/Ruixi-rebirth/flakes.git --extra-experimental-features nix-command --extra-experimental-features flakes
+nix run nixpkgs#git clone https://github.com/Ruixi-rebirth/flakes.git --extra-experimental-features nix-command --extra-experimental-features flakes
 ```
 
 step2:
 
 ```console
-$ cd flakes; rm -rf .git
+cd flakes; rm -rf .git
 ```
 
 step3:
 
 ```console
-$ nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
+nix develop --extra-experimental-features nix-command --extra-experimental-features flakes
 ```
 
 step4
 
 ```console
-$ just disko
+just disko
 ```
 
 step5
 
 ```console
-$ just install
+just install
 ```
