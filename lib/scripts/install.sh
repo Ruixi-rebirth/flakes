@@ -52,6 +52,14 @@ if [ ${#hosts[@]} -eq 0 ]; then
 fi
 
 while true; do
+  echo "--------------------------------------------------------"
+  echo "💡 Installation Suggestions:"
+  echo "- minimal: Highly recommended for initial installation (stable & fast)."
+  echo "- yu: Based on WSL (Windows Subsystem for Linux)."
+  echo "- k-on: Regular NixOS full configuration."
+  echo "⚠️  RAM Recommendation: > 8GB"
+  echo "   (Small RAM may cause 'No space left on device' in Live environment)"
+  echo "--------------------------------------------------------"
   echo "The partition is now complete, please select the device you wish to install:"
   for i in "${!hosts[@]}"; do
     echo "$((i + 1)). ${hosts[$i]}"
