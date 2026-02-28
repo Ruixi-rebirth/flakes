@@ -65,6 +65,7 @@
       jq
       tldr
       gptfdisk
+      just
     ];
   };
 

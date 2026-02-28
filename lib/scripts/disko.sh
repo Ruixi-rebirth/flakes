@@ -98,10 +98,22 @@ partition_layout="${layouts[$((layout_idx - 1))]}"
 
 # 3. Handle LUKS if applicable
 if [[ "$(basename "$partition_layout")" == *"luks"* ]]; then
-  read -p $'\e[1;31mEnter LUKS password (will be stored in /tmp/secret.key): \e[0m' -r luks_pass
-  echo -n "$luks_pass" >"$LUKS_KEY_FILE"
-  chmod 600 "$LUKS_KEY_FILE"
-  success "LUKS key prepared."
+  echo -e "${RED}LUKS encryption detected. Please set the disk encryption password:${NC}"
+  while true; do
+    read -s -p "Enter LUKS password: " luks_pass
+    echo
+    read -s -p "Confirm LUKS password: " luks_pass_confirm
+    echo
+
+    if [ "$luks_pass" != "$luks_pass_confirm" ]; then
+      warn "Passwords do not match. Please try again."
+    else
+      echo -n "$luks_pass" >"$LUKS_KEY_FILE"
+      chmod 600 "$LUKS_KEY_FILE"
+      success "LUKS key prepared and confirmed."
+      break
+    fi
+  done
 fi
 
 # 4. Review & Final Confirmation

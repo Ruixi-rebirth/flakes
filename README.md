@@ -13,11 +13,7 @@
 
 #### 📽️ Installation Demo
 
-![install_demo](./assets/install_demo.mp4)
-
-<div align="center">
-  <video src="/assets/install_demo.mp4" width="800px" controls autoplay loop muted></video>
-</div>
+https://github.com/user-attachments/assets/6aff86cd-eccd-46e0-b4fc-df42fd79e85e
 
 ---
 
