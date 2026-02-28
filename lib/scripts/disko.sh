@@ -118,7 +118,8 @@ read -p "Type 'YES' to proceed: " final_confirm
 
 # 5. Run Disko
 info "Executing Disko..."
-nix --extra-experimental-features "nix-command flakes" run github:nix-community/disko -- --mode disko "$partition_layout"
+
+nix --experimental-features "nix-command flakes" run github:nix-community/disko/latest -- --mode destroy,format,mount "$partition_layout"
 
 # 6. File System Preparation (Impermanence Support)
 info "Preparing mount points for $selected_host..."
