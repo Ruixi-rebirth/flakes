@@ -19,6 +19,7 @@
       "audio"
       "kvm"
       "libvirtd"
+      "adbusers"
     ];
   };
 }

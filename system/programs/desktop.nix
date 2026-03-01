@@ -49,7 +49,6 @@
       blender
       s-search
       gparted
-      android-tools
     ];
     variables.NIXOS_OZONE_WL = "1";
   };
@@ -71,8 +70,6 @@
       jack.enable = true;
     };
   };
-
-  users.users.${me.userName}.extraGroups = [ "adbuser" ];
 
   systemd = {
     user.services.polkit-gnome-authentication-agent-1 = {

@@ -128,6 +128,7 @@
       tldr
       gptfdisk
       just
+      android-tools
     ];
   };
 
