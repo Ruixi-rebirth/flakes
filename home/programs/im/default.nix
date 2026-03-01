@@ -3,9 +3,11 @@
   home = {
     packages = with pkgs; [
       telegram-desktop
-      qq
       wechat
-      feishu
+      qq
+      (feishu.override {
+        nss = nss_latest; # Fix issue where Feishu documents cannot be opened due to NSS version mismatch
+      })
       wemeet
       # nur.repos.linyinfeng.icalingua-plus-plus
       (vesktop.overrideAttrs (oldAttrs: {

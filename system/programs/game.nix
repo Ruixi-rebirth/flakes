@@ -16,11 +16,11 @@
           libGL
           dbus
           # Additional XCB and Qt-related dependencies for the emulator
-          xorg.xcbutil
-          xorg.xcbutilwm
-          xorg.xcbutilimage
-          xorg.xcbutilkeysyms
-          xorg.xcbutilrenderutil
+          libxcb-util
+          libxcb-wm
+          libxcb-image
+          libxcb-keysyms
+          libxcb-render-util
           qt5.qtwayland
           libpulseaudio
           alsa-lib
