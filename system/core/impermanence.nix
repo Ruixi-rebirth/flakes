@@ -16,7 +16,7 @@
         "/etc/secureboot"
       ];
       files = [
-        # "/etc/machine-id"
+        "/etc/machine-id"
         "/etc/create_ap.conf"
       ];
       users.${me.userName} = {

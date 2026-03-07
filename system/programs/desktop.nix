@@ -49,12 +49,9 @@
       blender
       s-search
       gparted
+      brightnessctl
     ];
     variables.NIXOS_OZONE_WL = "1";
-  };
-
-  programs = {
-    light.enable = true;
   };
 
   services = {
