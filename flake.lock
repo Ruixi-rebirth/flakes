@@ -2038,11 +2038,11 @@
         "vim-translator": "vim-translator"
       },
       "locked": {
-        "lastModified": 1772854205,
-        "narHash": "sha256-BqkBw4YlSoyrdGjd4jEuawbB0gSxYJzKHa2BWtEYQIM=",
+        "lastModified": 1772874731,
+        "narHash": "sha256-R/fm3trEBIBERHKJd5FfI9nwdvFwf2/pDh4bQXv9yOc=",
         "owner": "Ruixi-rebirth",
         "repo": "nvim-flake",
-        "rev": "d37ac509ad13d0fa9f6fc3141a6cae7dd5915a38",
+        "rev": "cbb6a1bb14a6404335acf001ee01e3f126d652b2",
         "type": "github"
       },
       "original": {
