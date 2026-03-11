@@ -75,7 +75,7 @@ in
 
   programs.nvim = {
     enable = true;
-    package = inputs.nvim-flake.packages.${pkgs.stdenv.hostPlatform.system}.lazynvim;
+    # package = inputs.nvim-flake.packages.${pkgs.stdenv.hostPlatform.system}.lazynvim;
     defaultEditor = true;
     enableFishIntegration = true;
     enableBashIntegration = true;

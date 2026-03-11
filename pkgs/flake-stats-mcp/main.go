@@ -56,7 +56,7 @@ func getFlakeSummary() (string, error) {
 		return nil
 	})
 
-	return fmt.Sprintf("NixOS Flake 概览:\n- 检测到主机配置: %s\n- 项目中 Nix 文件总数: %d\n- 状态: 运行正常", 
+	return fmt.Sprintf("NixOS Flake 概览:\n- 检测到主机配置: %s\n- 项目中 Nix 文件总数: %d\n- 状态: 运行正常",
 		strings.Join(hosts, ", "), nixFilesCount), nil
 }
 

@@ -8,13 +8,14 @@ local flake_parts_options_expr =
   'let flake = builtins.getFlake ("git+file://" + toString ./.); in flake.debug.options // flake.currentSystem.options'
 nvim_lsp.config("nixd", {
   cmd = { "nixd" },
+  filetypes = { "nix" },
   settings = {
     nixd = {
       nixpkgs = {
         expr = 'import (builtins.getFlake ("git+file://" + toString ./.)).inputs.nixpkgs { }',
       },
       formatting = {
-        command = { "nix fmt" },
+        command = { "nixfmt" },
       },
       options = {
         nixos = {
