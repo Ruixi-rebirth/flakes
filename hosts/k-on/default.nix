@@ -23,6 +23,7 @@ in
 
   # NOTE: Power management/Suspend and hibernate: https://wiki.archlinux.org/title/Power_management/Suspend_and_hibernate
   boot = {
+    # TODO: Still need to manually specify the device for the swapfile
     resumeDevice = "/dev/mapper/pool-root"; # The partition where the swapfile is located
     kernel.sysctl = {
       "kernel.kptr_restrict" = 0;
@@ -34,7 +35,8 @@ in
       "splash"
       "nvidia-drm.modeset=1"
       "modprobe.blacklist=nouveau"
-      "resume_offset=13938688" # `filefrag -v /var/lib/swapfile | awk '$1=="0:" {print substr($4, 1, length($4)-2)}'`
+      # TODO: Offset varies per installation; manual update required
+      "resume_offset=206635008" # `filefrag -v /var/lib/swapfile | awk '$1=="0:" {print substr($4, 1, length($4)-2)}'`
     ];
   };
 
