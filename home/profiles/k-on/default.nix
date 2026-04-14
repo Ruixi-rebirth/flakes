@@ -4,6 +4,7 @@
     ../../wall
     ../../shell
     ../../dev
+    ../../dev/android.nix
     ../../editors/neovim
     ../../terminals
     ../../programs

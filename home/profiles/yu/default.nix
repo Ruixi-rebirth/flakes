@@ -4,5 +4,6 @@
     ../../shell
     ../../dev
     ../../editors/neovim
+    ../../ai
   ];
 }

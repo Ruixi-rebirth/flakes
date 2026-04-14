@@ -6,6 +6,5 @@
     ./cpp.nix
     ./ts.nix
     ./direnv.nix
-    ./android.nix
   ];
 }
