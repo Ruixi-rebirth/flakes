@@ -3,7 +3,7 @@
     ../../programs/wsl
     ../../shell
     ../../dev
-    ../../editors/neovim
+    (import ../../editors/neovim { withGUI = true; })
     ../../ai
   ];
 }

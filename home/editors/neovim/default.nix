@@ -1,3 +1,4 @@
+{ withGUI ? false }:
 {
   config,
   lib,
@@ -41,11 +42,16 @@ let
           type = types.bool;
           default = true;
         };
+
+        withGUI = mkOption {
+          type = types.bool;
+          default = false;
+        };
       };
 
       config = mkIf cfg.enable (mkMerge [
         {
-          home.packages = [ cfg.package ];
+          home.packages = [ cfg.package ] ++ (optional cfg.withGUI pkgs.neovide);
           programs.fish.shellAliases = mkIf cfg.enableFishIntegration {
             e = "nvim";
             vi = "nvim";
@@ -75,10 +81,10 @@ in
 
   programs.nvim = {
     enable = true;
-    # package = inputs.nvim-flake.packages.${pkgs.stdenv.hostPlatform.system}.lazynvim;
     defaultEditor = true;
     enableFishIntegration = true;
     enableBashIntegration = true;
     withNixLSP = true;
+    withGUI = withGUI;
   };
 }

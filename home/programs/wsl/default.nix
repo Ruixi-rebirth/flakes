@@ -9,5 +9,6 @@
     ../ssh
     ../yazi
     ../zoxide
+    ../fastfetch
   ];
 }

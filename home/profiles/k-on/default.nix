@@ -5,7 +5,7 @@
     ../../shell
     ../../dev
     ../../dev/android.nix
-    ../../editors/neovim
+    (import ../../editors/neovim { })
     ../../terminals
     ../../programs
   ]
