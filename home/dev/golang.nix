@@ -84,7 +84,7 @@ in
   programs.go = rec {
     enable = true;
     env = {
-      GOPATH = "/home/${me.userName}}/Codelearning/go";
+      GOPATH = "/home/${me.userName}/Codelearning/go";
       GOBIN = "${env.GOPATH}/bin";
     };
     goMODCACHE = "Codelearning/go/pkg/mod";
