@@ -12,4 +12,4 @@ install:
 
 rebuild-switch:
     echo "Running rebuild script..."
-    bash ./lib/scripts/rebuild.sh
+    NIX_CONFIG="experimental-features = nix-command flakes" bash ./lib/scripts/rebuild.sh
