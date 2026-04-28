@@ -1,4 +1,5 @@
 {
+  inputs,
   config,
   lib,
   pkgs,
@@ -45,6 +46,7 @@ in
       lldb
       clang-tools
       bear
+      inputs.cppup.packages.${pkgs.stdenv.hostPlatform.system}.default
     ];
   };
 }

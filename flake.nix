@@ -155,6 +155,7 @@
     sops-nix.url = "github:Mic92/sops-nix";
     treefmt-nix.url = "github:numtide/treefmt-nix";
     mygo.url = "github:Ruixi-rebirth/mygo";
+    cppup.url = "github:Ruixi-rebirth/cppup";
     nixos-wsl.url = "github:nix-community/NixOS-WSL";
     go-musicfox.url = "github:go-musicfox/go-musicfox";
   };
