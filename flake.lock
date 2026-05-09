@@ -134,11 +134,11 @@
         "treefmt-nix": "treefmt-nix"
       },
       "locked": {
-        "lastModified": 1777629009,
-        "narHash": "sha256-r8H8dKYVHDxpA/IvBl+fsbpevvtJBUNu2gtrwPKbliE=",
+        "lastModified": 1778305656,
+        "narHash": "sha256-UpiNEQQVPdBuMiethXJHZoXyPiRMkRjIfnUuEgIbr3w=",
         "owner": "Ruixi-rebirth",
         "repo": "cppup",
-        "rev": "311b4b277cb3db89880dd90f55c5a283b2e8282c",
+        "rev": "de7a31da66bfec96aae2211932c9e68fa0fb98b8",
         "type": "github"
       },
       "original": {
