@@ -3,7 +3,7 @@
     direnv = {
       enable = true;
       nix-direnv.enable = true;
-      config = { };
+      silent = true;
     };
   };
 }

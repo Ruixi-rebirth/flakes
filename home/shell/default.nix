@@ -1,5 +1,6 @@
 {
   imports = [
     ./fish
+    ./starship.nix
   ];
 }

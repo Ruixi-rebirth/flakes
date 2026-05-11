@@ -1,4 +1,6 @@
-{ withGUI ? false }:
+{
+  withGUI ? false,
+}:
 {
   config,
   lib,
