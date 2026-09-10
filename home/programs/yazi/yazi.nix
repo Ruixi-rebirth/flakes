@@ -94,57 +94,57 @@
         block = true;
         desc = "$EDITOR";
         for = "unix";
-        run = "\${EDITOR:-vi} \"$@\"";
+        run = "\${EDITOR:-vi} %s";
       }
     ];
     extract = [
       {
         desc = "Extract here";
         for = "unix";
-        run = "ya pub extract --list \"$@\"";
+        run = "ya pub extract --list %s";
       }
     ];
     open = [
       {
         desc = "Open";
         for = "linux";
-        run = "xdg-open \"$1\"";
+        run = "xdg-open %s1";
       }
       {
         desc = "Open";
         for = "macos";
-        run = "open \"$@\"";
+        run = "open %s";
       }
     ];
     play = [
       {
         for = "unix";
         orphan = true;
-        run = "mpv --force-window \"$@\"";
+        run = "mpv --force-window %s";
       }
       {
         block = true;
         desc = "Show media info";
         for = "unix";
-        run = "mediainfo \"$1\"; echo \"Press enter to exit\"; read _";
+        run = "mediainfo %s1; echo \"Press enter to exit\"; read _";
       }
     ];
     reveal = [
       {
         desc = "Reveal";
         for = "linux";
-        run = "xdg-open \"$(dirname \"$1\")\"";
+        run = "xdg-open %d1";
       }
       {
         desc = "Reveal";
         for = "macos";
-        run = "open -R \"$1\"";
+        run = "open -R %s1";
       }
       {
         block = true;
         desc = "Show EXIF";
         for = "unix";
-        run = "exiftool \"$1\"; echo \"Press enter to exit\"; read _";
+        run = "exiftool %s1; echo \"Press enter to exit\"; read _";
       }
     ];
   };
