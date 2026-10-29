@@ -13,3 +13,6 @@ install:
 rebuild-switch:
     echo "Running rebuild script..."
     NIX_CONFIG="experimental-features = nix-command flakes" bash ./lib/scripts/rebuild.sh
+
+anywhere host target *args="":
+    nix run github:nix-community/nixos-anywhere -- --build-on-remote {{args}} --flake .#{{host}} {{target}}

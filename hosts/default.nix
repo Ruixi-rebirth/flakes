@@ -87,5 +87,18 @@
           (mkHomeManager "yu")
         ];
       };
+      oci = nixosSystem {
+        specialArgs = specialArgs // {
+          enableLanzaboote = false;
+        };
+        modules = [
+          ./oci
+          "${mod}/core"
+          "${mod}/core/boot.nix"
+          "${mod}/nix"
+          inputs.lanzaboote.nixosModules.lanzaboote
+          inputs.disko.nixosModules.disko
+        ];
+      };
     };
 }
