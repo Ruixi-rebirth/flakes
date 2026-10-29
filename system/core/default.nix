@@ -1,5 +1,6 @@
 {
   pkgs,
+  me,
   ...
 }:
 {
@@ -13,6 +14,10 @@
   programs.git = {
     enable = true;
     config = {
+      user = {
+        name = me.githubUserName;
+        email = me.email;
+      };
       safe.directory = [ "*" ];
     };
   };

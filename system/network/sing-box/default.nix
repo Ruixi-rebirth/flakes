@@ -38,13 +38,17 @@ in
       hy2_enc=$(printf %s "$hy2" | ${pkgs.jq}/bin/jq -sRr @uri)
 
       vless="vless://''${uuid}@''${host}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&type=tcp#OCI-VLESS-Reality"
-      hy="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&insecure=1#OCI-Hysteria2"
+      hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&insecure=1&mport=${toString realityPort},${toString hy2Port}#OCI-Hysteria2-443"
+      hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&insecure=1&mport=${toString hy2Port},${toString realityPort}#OCI-Hysteria2-8443"
 
       echo "# VLESS + Reality (TCP ${toString realityPort})"
       echo "$vless"
       echo
+      echo "# Hysteria 2 (UDP 443)"
+      echo "$hy443"
+      echo
       echo "# Hysteria 2 (UDP ${toString hy2Port})"
-      echo "$hy"
+      echo "$hy8443"
     '')
   ];
 
@@ -124,10 +128,11 @@ in
     };
   };
 
-  # Allow sing-box to bind to privileged ports (443) without running as root
+  # Allow sing-box to bind to privileged ports (443) without running as root and raise fd limits
   systemd.services.sing-box.serviceConfig = {
     AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
     CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
+    LimitNOFILE = 1048576;
   };
 
   # Generate self-signed certificate for Hysteria 2 before sing-box starts
@@ -162,10 +167,17 @@ in
       hy2Port
     ];
     extraCommands = ''
+      # TCP MSS Clamping to prevent Path MTU black holes
+      iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+      ip6tables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
       iptables -t nat -A PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
       ip6tables -t nat -A PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
     '';
     extraStopCommands = ''
+      iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+      ip6tables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
       iptables -t nat -D PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
       ip6tables -t nat -D PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
     '';

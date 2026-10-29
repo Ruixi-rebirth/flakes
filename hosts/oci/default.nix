@@ -2,10 +2,6 @@
 {
   imports = [ ./hardware-configuration.nix ];
 
-  networking.hostName = "oci";
-
-  # Same as k-on (see system/core/sops.nix): decrypt with the age key in keys.txt.
-  # You must put this file on the machine yourself before the first rebuild.
   sops = {
     defaultSopsFile = ../../secrets/secrets.yaml;
     gnupg.sshKeyPaths = [ ];
@@ -15,16 +11,22 @@
     };
   };
 
-  networking.firewall = {
-    enable = true;
-    allowedTCPPorts = [
-      22
-      443
-    ];
-    allowedUDPPorts = [
-      443
-      8443
-    ];
+  networking = {
+    hostName = "oci";
+    dhcpcd.extraConfig = ''
+      nooption interface_mtu
+    '';
+    firewall = {
+      enable = true;
+      allowedTCPPorts = [
+        22
+        443
+      ];
+      allowedUDPPorts = [
+        443
+        8443
+      ];
+    };
   };
 
   boot = {
@@ -35,20 +37,38 @@
       "console=ttyAMA0,115200"
     ];
     kernel.sysctl = {
+      # BBR congestion control requires FQ (Fair Queueing) packet pacing
       "net.core.default_qdisc" = "fq";
       "net.ipv4.tcp_congestion_control" = "bbr";
+
+      # Enable packet forwarding for NAT port redirection
+      "net.ipv4.ip_forward" = 1;
+      "net.ipv6.conf.all.forwarding" = 1;
+
+      # TCP window buffers tuned for BDP (1 Gbps @ 250ms RTT ≈ 31.25 MB)
       "net.core.rmem_max" = 33554432;
       "net.core.wmem_max" = 33554432;
-      "net.core.rmem_default" = 1048576;
-      "net.core.wmem_default" = 1048576;
       "net.ipv4.tcp_rmem" = "4096 131072 33554432";
       "net.ipv4.tcp_wmem" = "4096 65536 33554432";
-      "net.ipv4.udp_rmem_min" = 16384;
-      "net.ipv4.udp_wmem_min" = 16384;
+
+      # Prevent cwnd collapse during idle intervals between video segment downloads
       "net.ipv4.tcp_slow_start_after_idle" = 0;
+
+      # RFC 4821 PLPMTUD: dynamically detect and recover from Path MTU black holes
       "net.ipv4.tcp_mtu_probing" = 1;
+
+      # Enable TCP Fast Open for both client and server (saves 1 RTT during handshake)
       "net.ipv4.tcp_fastopen" = 3;
+
+      # Queue depth for burst traffic on high-bandwidth NIC
       "net.core.netdev_max_backlog" = 16384;
+      "net.core.somaxconn" = 8192;
+      "net.ipv4.tcp_max_syn_backlog" = 8192;
+
+      # Fast cleanup of dead TCP connections (5 min instead of 2 hours default)
+      "net.ipv4.tcp_keepalive_time" = 300;
+      "net.ipv4.tcp_keepalive_intvl" = 30;
+      "net.ipv4.tcp_keepalive_probes" = 5;
     };
   };
 
