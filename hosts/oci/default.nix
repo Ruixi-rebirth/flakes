@@ -4,6 +4,17 @@
 
   networking.hostName = "oci";
 
+  # Same as k-on (see system/core/sops.nix): decrypt with the age key in keys.txt.
+  # You must put this file on the machine yourself before the first rebuild.
+  sops = {
+    defaultSopsFile = ../../secrets/secrets.yaml;
+    gnupg.sshKeyPaths = [ ];
+    age = {
+      sshKeyPaths = [ ];
+      keyFile = "/var/lib/sops-nix/keys.txt";
+    };
+  };
+
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [
@@ -46,4 +57,8 @@
     enable = true;
     memoryPercent = 50;
   };
+
+  environment.systemPackages = with pkgs; [
+    antigravity-cli
+  ];
 }

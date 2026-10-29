@@ -96,8 +96,10 @@
           "${mod}/core"
           "${mod}/core/boot.nix"
           "${mod}/nix"
+          "${mod}/network/sing-box"
           inputs.lanzaboote.nixosModules.lanzaboote
           inputs.disko.nixosModules.disko
+          inputs.sops-nix.nixosModules.sops
         ];
       };
     };
