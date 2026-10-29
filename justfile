@@ -15,4 +15,4 @@ rebuild-switch:
     NIX_CONFIG="experimental-features = nix-command flakes" bash ./lib/scripts/rebuild.sh
 
 anywhere host target *args="":
-    nix run github:nix-community/nixos-anywhere -- --build-on-remote {{args}} --flake .#{{host}} {{target}}
+    nix run github:nix-community/nixos-anywhere -- --build-on remote --kexec-extra-flags "-c" {{args}} --flake .#{{host}} {{target}}

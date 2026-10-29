@@ -41,7 +41,6 @@
   };
 
   environment = {
-    binsh = "${pkgs.dash}/bin/dash";
     shells = [ pkgs.fish ];
   };
 
