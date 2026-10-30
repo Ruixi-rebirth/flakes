@@ -13,7 +13,6 @@ import json
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -34,9 +33,6 @@ DEFAULT_SOPS_QQ_SECRET_PATH = "/run/secrets/qq_bot_secret"
 DEFAULT_SOPS_QQ_OWNER_PATH = "/run/secrets/qq_bot_owner_openid"
 DEFAULT_REGION = "ap-singapore-1"
 DEFAULT_STATE_FILE = "/var/lib/oci-bill-bot/state.json"
-
-IMDS_BASE_URL = "http://169.254.169.254/opc/v2"
-IMDS_HEADERS = {"Authorization": "Bearer Oracle"}
 
 QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
 QQ_API_BASE = "https://api.sgroup.qq.com"
@@ -262,42 +258,63 @@ def build_oci_bill_report() -> tuple[str, float]:
     return "\n".join(lines), today_cost
 
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+LOG_PREFIX_RE = re.compile(r"^\[(INFO|OK|WARN|ERR)\]\s*")
+
+
+def _strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
+
+
+def _run_oci_ip(args: list[str], timeout: int = 180) -> tuple[int, str]:
+    res = subprocess.run(
+        ["oci-ip", *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    combined = (res.stdout or "") + (
+        ("\n" + res.stderr) if res.stderr else ""
+    )
+    return res.returncode, _strip_ansi(combined).strip()
+
+
+def _format_cli_output(title: str, raw_out: str) -> list[str]:
+    lines = [f"### {title}"]
+    for raw in raw_out.splitlines():
+        s = LOG_PREFIX_RE.sub("", raw.strip()).strip()
+        if not s:
+            if len(lines) > 1 and lines[-1] != "":
+                lines.append("")
+            continue
+        if s.startswith("预留 IP ("):
+            lines.append(f"\n**{s}**")
+        elif ":" in s and not s.startswith("http"):
+            k, v = s.split(":", 1)
+            lines.append(f"- **{k.strip()}**: `{v.strip()}`")
+        else:
+            lines.append(f"- `{s}`")
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def build_oci_ip_summary() -> str:
-    config = get_oci_config()
-    tenancy = config["tenancy"]
-    vn_client = oci.core.VirtualNetworkClient(config)
-    reserved_ips = vn_client.list_public_ips(
-        scope="REGION", compartment_id=tenancy, lifetime="RESERVED"
-    ).data
-    lines = [f"### OCI 预留 IP ({len(reserved_ips)})"]
-    if not reserved_ips:
-        lines.append("- 无")
-    for item in reserved_ips:
-        st = "已绑定" if item.private_ip_id else "未绑定(闲置)"
-        lines.append(f"- `{item.ip_address}` **{st}** ({item.display_name or '-'})")
-    return "\n".join(lines)
+    code, out = _run_oci_ip(["status"], timeout=30)
+    if code != 0:
+        raise RuntimeError(out or "oci-ip status 执行失败")
+    return "\n".join(_format_cli_output("OCI 预留 IP 状态", out))
 
 
 def cleanup_unbound_ips() -> str:
-    config = get_oci_config()
-    tenancy = config["tenancy"]
-    vn_client = oci.core.VirtualNetworkClient(config)
-    reserved_ips = vn_client.list_public_ips(
-        scope="REGION", compartment_id=tenancy, lifetime="RESERVED"
-    ).data
-    removed: list[str] = []
-    for item in reserved_ips:
-        if not item.private_ip_id and item.lifecycle_state in {"AVAILABLE", "UNASSIGNED"}:
-            vn_client.delete_public_ip(item.id)
-            removed.append(item.ip_address)
-    if not removed:
-        return "### 预留 IP 清理\n- 当前没有未绑定的闲置预留 IP，无需清理。"
-    return f"### 预留 IP 清理\n- 已释放 **{len(removed)}** 个未绑定预留 IP: `{', '.join(removed)}`"
+    code, out = _run_oci_ip(["cleanup"], timeout=60)
+    if code != 0:
+        raise RuntimeError(out or "oci-ip cleanup 执行失败")
+    return "\n".join(_format_cli_output("预留 IP 清理", out))
 
 
 def build_singbox_links(ip_override: str | None = None) -> str:
-    cmd_bin = shutil.which("singbox-links") or "/run/current-system/sw/bin/singbox-links"
-    cmd = [cmd_bin]
+    cmd = ["singbox-links"]
     if ip_override:
         cmd.append(ip_override)
     res = subprocess.run(
@@ -319,471 +336,85 @@ def build_singbox_links(ip_override: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def fetch_imds(path: str, timeout: float = 0.5) -> Any | None:
-    try:
-        resp = requests.get(
-            f"{IMDS_BASE_URL}/{path.lstrip('/')}",
-            headers=IMDS_HEADERS,
-            timeout=timeout,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-    except requests.RequestException:
-        pass
-    return None
-
-
-def resolve_primary_private_ip_id(
-    vn_client: oci.core.VirtualNetworkClient,
-    comp_id: str,
-) -> str:
-    vnics = fetch_imds("vnics")
-    if vnics and isinstance(vnics, list) and len(vnics) > 0:
-        vnic_id = vnics[0].get("vnicId")
-        if vnic_id:
-            try:
-                priv_ips = vn_client.list_private_ips(vnic_id=vnic_id).data
-                for p in priv_ips:
-                    if p.is_primary:
-                        return p.id
-                if priv_ips:
-                    return priv_ips[0].id
-            except oci.exceptions.ServiceError:
-                pass
-
-    # 若不在 IMDS 环境中，优先从当前已绑定的预留 IP 反查主私网 IP
-    reserved_ips = vn_client.list_public_ips(
-        scope="REGION", compartment_id=comp_id, lifetime="RESERVED"
-    ).data
-    for item in reserved_ips:
-        if item.private_ip_id:
-            return item.private_ip_id
-
-    subnets = vn_client.list_subnets(compartment_id=comp_id).data
-    for subnet in subnets:
-        priv_ips = vn_client.list_private_ips(subnet_id=subnet.id).data
-        for p in priv_ips:
-            if p.is_primary:
-                return p.id
-
-    raise RuntimeError("未能自动识别实例主网卡私网 IP OCID")
-
-
-def ensure_service_gateway(
-    vn_client: oci.core.VirtualNetworkClient,
-    private_ip_id: str,
-) -> None:
-    """
-    确保目标网卡所在 VCN 已挂载免费的 Oracle Services Network 服务网关 (Service Gateway) 并配置路由：
-    防止在实例本机执行解绑旧公网 IP 时，因短暂失去公网 IPv4 而导致后续绑定新 IP 的 OCI API 请求断网超时。
-    """
-    try:
-        priv_obj = vn_client.get_private_ip(private_ip_id).data
-        subnet = vn_client.get_subnet(priv_obj.subnet_id).data
-        comp_id = subnet.compartment_id
-        vcn_id = subnet.vcn_id
-        rt_id = subnet.route_table_id
-
-        services = vn_client.list_services().data
-        target_svc = None
-        for svc in services:
-            cb = (svc.cidr_block or "").lower()
-            if cb.startswith("all-") and cb.endswith(
-                "-services-in-oracle-services-network"
-            ):
-                target_svc = svc
-                break
-        if not target_svc and services:
-            target_svc = services[0]
-        if not target_svc:
-            return
-
-        sgws = [
-            s
-            for s in vn_client.list_service_gateways(
-                compartment_id=comp_id, vcn_id=vcn_id
-            ).data
-            if s.lifecycle_state not in ("TERMINATING", "TERMINATED")
-        ]
-        if sgws:
-            sgw = sgws[0]
-            existing_svc_ids = {s.service_id for s in (sgw.services or [])}
-            if target_svc.id not in existing_svc_ids:
-                vn_client.attach_service_id(
-                    sgw.id,
-                    oci.core.models.ServiceIdRequestDetails(service_id=target_svc.id),
-                )
-        else:
-            sgw = vn_client.create_service_gateway(
-                oci.core.models.CreateServiceGatewayDetails(
-                    compartment_id=comp_id,
-                    vcn_id=vcn_id,
-                    display_name="oci-internal-sgw",
-                    services=[
-                        oci.core.models.ServiceIdRequestDetails(
-                            service_id=target_svc.id
-                        )
-                    ],
-                )
-            ).data
-            for _ in range(20):
-                if sgw.lifecycle_state == "AVAILABLE":
-                    break
-                time.sleep(1.0)
-                sgw = vn_client.get_service_gateway(sgw.id).data
-
-        if rt_id:
-            rt = vn_client.get_route_table(rt_id).data
-            rules = list(rt.route_rules or [])
-            has_sgw_rule = any(
-                r.destination == target_svc.cidr_block
-                or r.network_entity_id == sgw.id
-                for r in rules
-            )
-            if not has_sgw_rule:
-                rules.append(
-                    oci.core.models.RouteRule(
-                        destination=target_svc.cidr_block,
-                        destination_type="SERVICE_CIDR_BLOCK",
-                        network_entity_id=sgw.id,
-                        description="Oracle Services Network internal routing",
-                    )
-                )
-                vn_client.update_route_table(
-                    rt_id,
-                    oci.core.models.UpdateRouteTableDetails(route_rules=rules),
-                )
-    except Exception as e:
-        log(f"检查/配置 Service Gateway 时忽略非致命异常: {e}")
-
-
-def wait_public_ip_stable(
-    vn_client: oci.core.VirtualNetworkClient,
-    public_ip_id: str,
-    timeout: int = 30,
-) -> oci.core.models.PublicIp:
-    stable_states = {"AVAILABLE", "ASSIGNED", "UNASSIGNED"}
-    deadline = time.time() + timeout
-    last_obj = None
-    while time.time() < deadline:
-        last_obj = vn_client.get_public_ip(public_ip_id).data
-        if last_obj.lifecycle_state in stable_states:
-            return last_obj
-        time.sleep(1.0)
-    return last_obj
-
-
-def fetch_ip_info(ip: str, timeout: float = 6.0) -> dict[str, Any] | None:
-    try:
-        resp = requests.get(
-            f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,regionName,city,isp,org,as,mobile,proxy,hosting,query",
-            timeout=timeout,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("status") == "success":
-                return data
-    except requests.RequestException:
-        pass
-    return None
-
-
-def fetch_scamalytics_score(ip: str, timeout: float = 6.0) -> int | None:
-    try:
-        resp = requests.get(
-            f"https://scamalytics.com/ip/{ip}",
-            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64)"},
-            timeout=timeout,
-        )
-        if resp.status_code == 200:
-            match = re.search(r'"score"\s*:\s*"(\d+)"', resp.text)
-            if not match:
-                match = re.search(r"Fraud Score:\s*(\d+)", resp.text, re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-    except requests.RequestException:
-        pass
-    return None
-
-
-def check_china_tcp(ip: str, port: int = 443) -> dict[str, Any]:
-    overseas_open = False
-    try:
-        with socket.create_connection((ip, port), timeout=2.5):
-            overseas_open = True
-    except OSError:
-        overseas_open = False
-
-    if not overseas_open:
-        return {"status": "closed", "port": port}
-
-    try:
-        resp = requests.post(
-            "https://api.globalping.io/v1/measurements",
-            json={
-                "type": "ping",
-                "target": ip,
-                "locations": [{"country": "CN"}],
-                "limit": 3,
-                "measurementOptions": {
-                    "protocol": "TCP",
-                    "port": port,
-                    "packets": 2,
-                },
-            },
-            timeout=8.0,
-        )
-        if resp.status_code not in (200, 201, 202):
-            return {"status": "unknown", "port": port}
-        m_id = resp.json().get("id")
-        if not m_id:
-            return {"status": "unknown", "port": port}
-
-        deadline = time.time() + 18.0
-        data: dict[str, Any] = {}
-        while time.time() < deadline:
-            time.sleep(1.5)
-            r = requests.get(
-                f"https://api.globalping.io/v1/measurements/{m_id}", timeout=6.0
-            )
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("status") != "in-progress":
-                    break
-
-        results = data.get("results") or []
-        if not results:
-            return {"status": "unknown", "port": port}
-
-        ok_rtts: list[float] = []
-        total = len(results)
-        for item in results:
-            stats = (item.get("result") or {}).get("stats") or {}
-            rcv = int(stats.get("rcv") or 0)
-            avg = stats.get("avg")
-            if rcv > 0 and avg is not None:
-                ok_rtts.append(float(avg))
-
-        if not ok_rtts:
-            return {"status": "blocked", "port": port, "ok": 0, "total": total}
-
-        avg_ms = sum(ok_rtts) / len(ok_rtts)
-        return {
-            "status": "ok",
-            "port": port,
-            "ok": len(ok_rtts),
-            "total": total,
-            "avg_ms": round(avg_ms),
-        }
-    except requests.RequestException:
-        return {"status": "unknown", "port": port}
-
-
-def roll_and_switch_oci_ip(
-    prefixes: list[str] | None = None,
-    max_attempts: int = 10,
-    max_risk: int = 50,
-) -> str:
-    """
-    自动刷取新的优质 OCI 预留公网 IP，无损绑定至当前实例主网卡，
-    同时自动释放旧预留 IP（杜绝闲置计费），并在完成后返回新 IP 质量报告与 sing-box 节点链接。
-    """
-    config = get_oci_config()
-    comp_id = config["tenancy"]
-    vn_client = oci.core.VirtualNetworkClient(config)
-    priv_id = resolve_primary_private_ip_id(vn_client, comp_id)
-
-    # 先确保 VCN 挂载免费 Service Gateway，确保本机解绑旧公网 IP 期间 OCI API 不断连
-    ensure_service_gateway(vn_client, priv_id)
-
-    initial_pub: oci.core.models.PublicIp | None = None
-    try:
-        initial_pub = vn_client.get_public_ip_by_private_ip_id(
-            oci.core.models.GetPublicIpByPrivateIpIdDetails(private_ip_id=priv_id)
-        ).data
-    except oci.exceptions.ServiceError as e:
-        if e.status != 404:
-            raise
-    initial_ip = initial_pub.ip_address if initial_pub else "未绑定"
-
-    total_rolls = 0
-    final_ip = ""
-    final_info: dict[str, Any] = {}
-    final_score: int | None = None
-    final_gfw: dict[str, Any] = {"status": "unknown", "port": 443}
-
-    # 外层循环：若绑定后实测国内 TCP 443 被墙，自动再换一次（最多 3 轮）
-    for gfw_round in range(1, 4):
-        chosen_pub: oci.core.models.PublicIp | None = None
-
-        for attempt in range(1, max_attempts + 1):
-            total_rolls += 1
-            display_name = f"reserved-ip-{int(time.time())}"
-            created_pub: oci.core.models.PublicIp | None = None
-            try:
-                created_pub = vn_client.create_public_ip(
-                    oci.core.models.CreatePublicIpDetails(
-                        compartment_id=comp_id,
-                        lifetime="RESERVED",
-                        display_name=display_name,
-                    )
-                ).data
-                created_pub = wait_public_ip_stable(vn_client, created_pub.id)
-                cand_ip = created_pub.ip_address
-                log(f"[换IP] 第 {total_rolls} 次抽取到预留 IP: {cand_ip}")
-
-                if prefixes and not any(cand_ip.startswith(p) for p in prefixes):
-                    log(f"[换IP] {cand_ip} 未匹配前缀 {prefixes}，释放重试...")
-                    vn_client.delete_public_ip(created_pub.id)
-                    created_pub = None
-                    if attempt < max_attempts:
-                        time.sleep(2.5)
-                    continue
-
-                ip_info = fetch_ip_info(cand_ip) or {}
-                scam_score = fetch_scamalytics_score(cand_ip)
-                is_proxy = bool(ip_info.get("proxy"))
-
-                quality_ok = (not is_proxy) and (
-                    scam_score is None or scam_score <= max_risk
-                )
-                if quality_ok or (not prefixes and attempt == max_attempts):
-                    chosen_pub = created_pub
-                    final_ip = cand_ip
-                    final_info = ip_info
-                    final_score = scam_score
-                    break
-
-                log(
-                    f"[换IP] 淘汰高危 IP {cand_ip} (proxy={is_proxy}, scam={scam_score})，释放重试..."
-                )
-                vn_client.delete_public_ip(created_pub.id)
-                created_pub = None
-            except oci.exceptions.ServiceError as e:
-                if created_pub is not None:
-                    try:
-                        vn_client.delete_public_ip(created_pub.id)
-                    except Exception:
-                        pass
-                if e.status == 429:
-                    time.sleep(8.0)
-                    continue
-                raise
-
-            if attempt < max_attempts:
-                time.sleep(2.5)
-
-        if not chosen_pub:
-            raise RuntimeError(
-                f"连续尝试 {max_attempts} 次未刷出符合条件的预留 IP（旧 IP `{initial_ip}` 保持不变）"
-            )
-
-        # 执行换绑：新建客户端连接以走 Service Gateway 路由，解绑旧 IP -> 绑定新 IP -> 删除旧预留 IP
-        vn_client = oci.core.VirtualNetworkClient(config)
-        cur_pub: oci.core.models.PublicIp | None = None
-        try:
-            cur_pub = vn_client.get_public_ip_by_private_ip_id(
-                oci.core.models.GetPublicIpByPrivateIpIdDetails(private_ip_id=priv_id)
-            ).data
-        except oci.exceptions.ServiceError as e:
-            if e.status != 404:
-                raise
-
-        if cur_pub and cur_pub.id != chosen_pub.id:
-            if cur_pub.lifetime == "EPHEMERAL":
-                vn_client.delete_public_ip(cur_pub.id)
-                for _ in range(25):
-                    try:
-                        vn_client.get_public_ip(cur_pub.id)
-                        time.sleep(1.0)
-                    except oci.exceptions.ServiceError as e:
-                        if e.status == 404:
-                            break
-            else:
-                vn_client.update_public_ip(
-                    cur_pub.id,
-                    oci.core.models.UpdatePublicIpDetails(private_ip_id=""),
-                )
-                wait_public_ip_stable(vn_client, cur_pub.id)
-
-        for bind_try in range(4):
-            try:
-                vn_client.update_public_ip(
-                    chosen_pub.id,
-                    oci.core.models.UpdatePublicIpDetails(private_ip_id=priv_id),
-                )
-                break
-            except Exception:
-                if bind_try == 3:
-                    raise
-                time.sleep(1.5)
-                vn_client = oci.core.VirtualNetworkClient(config)
-
-        wait_public_ip_stable(vn_client, chosen_pub.id)
-
-        # 清理所有未绑定的闲置预留 IP（包含刚刚解绑的旧预留 IP），确保 0 遗留计费
-        for item in vn_client.list_public_ips(
-            scope="REGION", compartment_id=comp_id, lifetime="RESERVED"
-        ).data:
-            if not item.private_ip_id and item.id != chosen_pub.id:
-                try:
-                    vn_client.delete_public_ip(item.id)
-                except Exception:
-                    pass
-
-        # 等待新公网 IP 出站路由就绪
-        for _ in range(10):
-            try:
-                r = requests.get("https://icanhazip.com", timeout=3)
-                if r.status_code == 200:
-                    break
-            except Exception:
-                pass
-            time.sleep(1.0)
-
-        # 检测新绑定 IP 的国内 TCP 443 (以及 22) 连通性
-        final_gfw = check_china_tcp(final_ip, port=443)
-        if final_gfw.get("status") == "closed":
-            final_gfw = check_china_tcp(final_ip, port=22)
-
-        if final_gfw.get("status") == "blocked" and gfw_round < 3:
-            log(f"[换IP] 新 IP {final_ip} 国内 TCP 被阻断，正在自动开启第 {gfw_round + 1} 轮重刷...")
-            continue
-        break
-
-    country = final_info.get("country") or "-"
-    cc = final_info.get("countryCode") or ""
-    city = final_info.get("city") or ""
-    loc_str = f"{country} ({cc}) {city}".strip() if cc else country
-    asn_str = final_info.get("as") or "-"
-    score_str = f"{final_score}/100" if final_score is not None else "未知"
-    proxy_str = "是" if final_info.get("proxy") else "否"
-
-    g_st = final_gfw.get("status")
-    g_port = final_gfw.get("port", 443)
-    if g_st == "ok":
-        gfw_str = f"正常 ({final_gfw['ok']}/{final_gfw['total']} 节点连通, ~{final_gfw['avg_ms']}ms, 端口 {g_port})"
-    elif g_st == "blocked":
-        gfw_str = f"被阻断 (端口 {g_port})"
-    else:
-        gfw_str = f"未检出阻断 (端口 {g_port})"
-
-    lines = [
-        "### OCI 换 IP 完成",
-        f"- **旧公网 IP**: `{initial_ip}` (已解绑并释放)",
-        f"- **新公网 IP**: `{final_ip}` (共刷取 `{total_rolls}` 次)",
-        f"- **归属地区**: `{loc_str}`",
-        f"- **ASN 信息**: `{asn_str}`",
-        f"- **纯净指标**: `欺诈分 {score_str}` | `代理标记: {proxy_str}`",
-        f"- **国内 TCP**: `{gfw_str}`",
+def roll_candidate_oci_ip(prefixes: list[str] | None = None) -> str:
+    """步骤 1 (刷): 直接调用 oci-ip roll 刷出候选预留 IP（不换绑）。"""
+    cli_args = [
+        "roll",
+        "-n",
+        "10",
+        "--check-reputation",
+        "--no-abuser",
+        "--max-risk",
+        "50",
     ]
+    if prefixes:
+        for p in prefixes:
+            cli_args.extend(["--prefix", p])
+
+    code, out = _run_oci_ip(cli_args, timeout=240)
+    if code != 0:
+        raise RuntimeError(out or "oci-ip roll 未刷出符合条件的候选 IP")
+
+    lines = _format_cli_output("OCI 刷出候选预留 IP", out)
+    lines.extend(
+        [
+            "",
+            "**下一步指令**",
+            "- `/oci_check` : 检测候选与当前 IP 纯净度及国内连通性",
+            "- `/oci_bind` : 将该候选 IP 正式换绑至服务器并释放旧 IP",
+            "- `/oci_clean` : 放弃并释放该候选 IP（防闲置计费）",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def check_oci_ips(target_ip: str | None = None) -> str:
+    """步骤 2 (检查): 直接调用 oci-ip check 检测候选与当前预留 IP。"""
+    cli_args = ["check", "-p", "443"]
+    if target_ip:
+        cli_args.append(target_ip)
+    _, out = _run_oci_ip(cli_args, timeout=90)
+    if not out:
+        raise RuntimeError("oci-ip check 未返回检测结果")
+    return "\n".join(_format_cli_output("OCI IP 质量检测", out))
+
+
+def bind_candidate_oci_ip(target_ip: str | None = None) -> tuple[bool, str]:
+    """步骤 3 (换): 直接调用 oci-ip bind --delete-old 完成换绑并清理旧 IP。"""
+    cli_args = ["bind", "--delete-old"]
+    if target_ip:
+        cli_args.extend(["--ip", target_ip])
+
+    code, out = _run_oci_ip(cli_args, timeout=120)
+    if code == 2:
+        return (
+            False,
+            "### 暂无待绑定的候选 IP\n"
+            "- 当前账号下没有未绑定的候选预留 IP，**现有公网 IP 未做任何改动**。\n"
+            "- 请先发 `/oci_roll` 刷取候选 IP，确认满意后再发 `/oci_bind` 换绑。",
+        )
+    if code == 3:
+        return (
+            False,
+            "\n".join(
+                _format_cli_output("存在多个候选预留 IP，请指定", out)
+                + ["", "> 请发送 `/oci_bind <目标IP>` 指定要换绑的那一个。"]
+            ),
+        )
+    if code != 0:
+        raise RuntimeError(out or "oci-ip bind 执行失败")
+
+    lines = _format_cli_output("OCI 换绑 IP 完成", out)
+    m = re.search(r"切换为:\s*(\d+\.\d+\.\d+\.\d+)", out)
+    new_ip = m.group(1) if m else None
+
     try:
-        sb_links = build_singbox_links(ip_override=final_ip)
+        sb_links = build_singbox_links(ip_override=new_ip)
         lines.extend(["", sb_links])
     except Exception as e:
         lines.append(f"- **节点链接**: 生成失败 (`{e}`)")
 
-    return "\n".join(lines)
+    return True, "\n".join(lines)
 
 
 def _fmt_bytes(num_bytes: float) -> str:
@@ -1101,13 +732,13 @@ class QQBotApp:
 
         log(f"收到指令 [{target.get('type')}:{target.get('id')}]: /{cmd} {cmd_args}")
 
-        if cmd in ("oci_roll", "oci_change", "oci_switch", "oci_newip"):
+        if cmd == "oci_roll":
             if self.rolling_ip:
                 await loop.run_in_executor(
                     None,
                     self.send_message,
                     target,
-                    "### 任务进行中\n- 当前正在执行换 IP 任务，请等待本轮完成。",
+                    "### 任务进行中\n- 当前正在执行 IP 操作任务，请等待完成。",
                     msg_id,
                 )
                 return
@@ -1118,24 +749,72 @@ class QQBotApp:
                 None,
                 self.send_message,
                 target,
-                f"### 正在更换公网 IP\n- 正在刷取并检测优质预留 IP{prefix_hint}，换绑期间网络会短暂切换，完成后将自动推送新 IP 与节点链接...",
+                f"### 正在刷取候选预留 IP\n- 正在申请并检测纯净预留 IP{prefix_hint}（不会改动当前在用 IP），请稍候...",
                 msg_id,
             )
             try:
                 reply = await loop.run_in_executor(
                     None,
-                    roll_and_switch_oci_ip,
+                    roll_candidate_oci_ip,
                     cmd_args if cmd_args else None,
                 )
             except Exception as e:
-                reply = f"### 换 IP 失败\n- `{e}`"
+                reply = f"### 刷取候选 IP 失败\n- `{e}`"
             finally:
                 self.rolling_ip = False
 
             await loop.run_in_executor(
                 None, self.send_message, target, reply, msg_id
             )
-            if self.current_ws is not None:
+            return
+
+        if cmd == "oci_check":
+            target_ip = cmd_args[0] if cmd_args else None
+            await loop.run_in_executor(
+                None,
+                self.send_message,
+                target,
+                "### 正在检测 IP 质量\n- 正在查询原生属地、Scamalytics 欺诈评分与国内 TCP 连通性，请稍候...",
+                msg_id,
+            )
+            try:
+                reply = await loop.run_in_executor(
+                    None, check_oci_ips, target_ip
+                )
+            except Exception as e:
+                reply = f"### 检测 IP 失败\n- `{e}`"
+            await loop.run_in_executor(
+                None, self.send_message, target, reply, msg_id
+            )
+            return
+
+        if cmd == "oci_bind":
+            if self.rolling_ip:
+                await loop.run_in_executor(
+                    None,
+                    self.send_message,
+                    target,
+                    "### 任务进行中\n- 当前正在执行 IP 操作任务，请等待完成。",
+                    msg_id,
+                )
+                return
+
+            self.rolling_ip = True
+            target_ip = cmd_args[0] if cmd_args else None
+            did_switch = False
+            try:
+                did_switch, reply = await loop.run_in_executor(
+                    None, bind_candidate_oci_ip, target_ip
+                )
+            except Exception as e:
+                reply = f"### 换绑 IP 失败\n- `{e}`"
+            finally:
+                self.rolling_ip = False
+
+            await loop.run_in_executor(
+                None, self.send_message, target, reply, msg_id
+            )
+            if did_switch and self.current_ws is not None:
                 try:
                     await self.current_ws.close()
                 except Exception:
@@ -1163,7 +842,9 @@ class QQBotApp:
                     "### OCI 助手\n"
                     "- `/oci_bill` : 查询账单与防扣费巡检\n"
                     "- `/oci_ip` : 查看预留 IP 状态\n"
-                    "- `/oci_roll` : 自动刷取并更换优质公网 IP (支持 `/oci_roll 138.2.`)\n"
+                    "- `/oci_roll` : 刷取候选预留 IP (仅抽卡不换绑)\n"
+                    "- `/oci_check` : 检测候选/当前 IP 纯净度与国内连通性\n"
+                    "- `/oci_bind` : 将候选预留 IP 换绑至服务器并释放旧 IP\n"
                     "- `/oci_clean` : 释放未绑定预留 IP\n"
                     "- `/oci_link` : 获取 sing-box 节点链接\n"
                     "- `/oci_status` : 查看服务器实时负载与流量指标"

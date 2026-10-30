@@ -1,4 +1,5 @@
 {
+  config,
   pkgs,
   me,
   ...
@@ -98,6 +99,7 @@
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
+    path = config.environment.systemPackages;
     serviceConfig = {
       User = me.userName;
       StateDirectory = "oci-bill-bot";

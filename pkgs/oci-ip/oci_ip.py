@@ -297,9 +297,12 @@ def wait_public_ip_stable(
     deadline = time.time() + timeout
     last_obj = None
     while time.time() < deadline:
-        last_obj = client.get_public_ip(public_ip_id).data
-        if last_obj.lifecycle_state in stable_states:
-            return last_obj
+        try:
+            last_obj = client.get_public_ip(public_ip_id).data
+            if last_obj.lifecycle_state in stable_states:
+                return last_obj
+        except Exception:
+            client = oci.core.VirtualNetworkClient(client.base_client.config)
         time.sleep(1.0)
     return last_obj
 
@@ -655,6 +658,9 @@ def bind_reserved_ip_to_private_ip(
     - 然后将新的预留公网 IP 绑定到目标私网 IP。
     """
     ensure_service_gateway(client, private_ip_id)
+    # 重建客户端连接池，确保后续解绑/换绑 API 请求走刚生效的 Service Gateway 内网路由
+    client = oci.core.VirtualNetworkClient(client.base_client.config)
+
     existing_pub: oci.core.models.PublicIp | None = None
     try:
         existing_pub = client.get_public_ip_by_private_ip_id(
@@ -700,15 +706,36 @@ def bind_reserved_ip_to_private_ip(
                 old_reserved_to_delete = existing_pub
 
     wait_public_ip_stable(client, reserved_ip_id)
-    updated = client.update_public_ip(
-        reserved_ip_id,
-        oci.core.models.UpdatePublicIpDetails(private_ip_id=private_ip_id),
-    ).data
+    for bind_try in range(4):
+        try:
+            updated = client.update_public_ip(
+                reserved_ip_id,
+                oci.core.models.UpdatePublicIpDetails(private_ip_id=private_ip_id),
+            ).data
+            break
+        except Exception:
+            if bind_try == 3:
+                raise
+            time.sleep(1.5)
+            client = oci.core.VirtualNetworkClient(client.base_client.config)
     updated = wait_public_ip_stable(client, reserved_ip_id)
 
     if old_reserved_to_delete is not None:
         info(f"新 IP 已就绪，正在释放旧预留公网 IP {old_reserved_to_delete.ip_address}...")
-        client.delete_public_ip(old_reserved_to_delete.id)
+        try:
+            client.delete_public_ip(old_reserved_to_delete.id)
+        except Exception:
+            pass
+
+    # 等待新公网 IP 出站互联网路由就绪
+    for _ in range(10):
+        try:
+            r = requests.get("https://icanhazip.com", timeout=3)
+            if r.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(1.0)
 
     return updated
 
@@ -777,9 +804,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_check(args: argparse.Namespace) -> int:
+def _print_single_check(ip: str, args: argparse.Namespace, tag: str = "") -> bool:
     report = evaluate_ip_quality(
-        ip=args.ip,
+        ip=ip,
         cidrs=args.cidr,
         prefixes=args.prefix,
         exclude_cidrs=args.exclude_cidr,
@@ -812,13 +839,39 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         gfw_str = "未知"
 
-    print(f"IP       : {args.ip} [{badge}]")
+    tag_suffix = f" ({tag})" if tag else ""
+    print(f"IP       : {ip}{tag_suffix} [{badge}]")
     print(f"地区     : {d.get('country', '-')} {d.get('city', '')}")
     print(f"ASN      : {d.get('asn', '-')}")
     print(f"代理标记 : {proxy_str}")
     print(f"欺诈评分 : {score_str}")
     print(f"国内 TCP : {gfw_str} (端口 {gfw_port})")
-    return 0 if report.passed else 1
+    return report.passed
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    if args.ip:
+        return 0 if _print_single_check(args.ip, args) else 1
+
+    client, default_comp, _ = build_vn_client(
+        args.key_file, args.user_ocid, args.region
+    )
+    comp_id, _ = resolve_context(client, args.compartment_id, None, default_comp)
+    reserved_list = client.list_public_ips(
+        scope="REGION", compartment_id=comp_id, lifetime="RESERVED"
+    ).data
+    if not reserved_list:
+        warn("当前账号下没有任何预留公网 IP。")
+        return 1
+
+    all_passed = True
+    for idx, item in enumerate(reserved_list):
+        if idx > 0:
+            print()
+        tag = "已绑定" if item.private_ip_id else "候选未绑定"
+        if not _print_single_check(item.ip_address, args, tag=tag):
+            all_passed = False
+    return 0 if all_passed else 1
 
 
 def cmd_bind(args: argparse.Namespace) -> int:
@@ -840,8 +893,23 @@ def cmd_bind(args: argparse.Namespace) -> int:
             ).data
             target_pub_id = pub_obj.id
         else:
-            err("请通过 --ip <预留IP地址> 或 --reserved-ip-id <OCID> 指定要绑定的预留 IP。")
-            return 1
+            reserved_list = client.list_public_ips(
+                scope="REGION", compartment_id=comp_id, lifetime="RESERVED"
+            ).data
+            unbound = [
+                item
+                for item in reserved_list
+                if not item.private_ip_id
+                and item.lifecycle_state in {"AVAILABLE", "UNASSIGNED"}
+            ]
+            if not unbound:
+                err("当前账号下没有未绑定的候选预留 IP，现有公网 IP 未做任何改动。请先执行 oci-ip roll 刷取候选 IP。")
+                return 2
+            if len(unbound) > 1:
+                cand_ips = ", ".join(item.ip_address for item in unbound)
+                err(f"当前存在多个未绑定候选 IP: {cand_ips}，请使用 --ip <目标IP> 指定要绑定的那一个。")
+                return 3
+            target_pub_id = unbound[0].id
 
     info(f"正在将预留公网 IP ({target_pub_id}) 绑定到私网 IP ({priv_id})...")
     updated = bind_reserved_ip_to_private_ip(
@@ -951,16 +1019,18 @@ def cmd_roll(args: argparse.Namespace) -> int:
                 wait_public_ip_stable(client, created_pub.id)
 
             if report.passed:
-                ok(
-                    f"命中优质预留 IP: {BOLD}{candidate_ip}{RESET} (OCID: {created_pub.id})"
-                )
-                if report.details:
-                    print(
-                        "IP 详情:",
-                        json.dumps(report.details, ensure_ascii=False),
-                    )
+                ok(f"命中优质预留 IP: {BOLD}{candidate_ip}{RESET}")
+                d = report.details
+                if d:
+                    score = d.get("scamalytics_score")
+                    score_str = f"{score}/100" if score is not None else "未知"
+                    proxy_str = f"{RED}是{RESET}" if d.get("is_proxy") else f"{GREEN}否{RESET}"
+                    print(f"地区     : {d.get('country', '-')} {d.get('city', '')}")
+                    print(f"ASN      : {d.get('asn', '-')}")
+                    print(f"代理标记 : {proxy_str}")
+                    print(f"欺诈评分 : {score_str}")
                 for reason in report.reasons:
-                    ok(f"  ✓ {reason}")
+                    ok(f"通过条件 : {reason}")
 
                 if args.bind and priv_id:
                     info(f"正在将优质 IP {candidate_ip} 替换绑定到目标私网 IP ({priv_id})...")
@@ -972,10 +1042,7 @@ def cmd_roll(args: argparse.Namespace) -> int:
                     )
                     ok(f"已完成自动绑定！新公网 IP: {BOLD}{candidate_ip}{RESET}")
                 else:
-                    info(
-                        f"该预留 IP 已保留在账户中。随时可执行以下命令完成绑定:\n"
-                        f"  oci-ip bind --ip {candidate_ip}"
-                    )
+                    info(f"该预留 IP 已保留在账户中 (未绑定)。")
                 return 0
 
             # 未通过筛选：立即释放并等待下一轮
@@ -1163,14 +1230,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_bind.set_defaults(func=cmd_bind)
 
     # check
-    p_check = subparsers.add_parser("check", help="单独检测某个 IP 的纯净度、归属地与国内 TCP 墙检")
-    p_check.add_argument("ip", help="要检测的公网 IP 地址")
+    p_check = subparsers.add_parser("check", help="检测指定 IP 或当前账号下所有预留 IP 的纯净度与国内 TCP 墙检")
+    p_check.add_argument("ip", nargs="?", help="要检测的公网 IP 地址 (省略则自动检测账号下所有预留 IP)")
     p_check.add_argument(
         "-p",
         "--port",
         type=int,
-        default=22,
-        help="检测国内 TCP 连通性的端口号 (默认: 22)",
+        default=443,
+        help="检测国内 TCP 连通性的端口号 (默认: 443)",
     )
     p_check.add_argument("--prefix", action="append", help="期望匹配的 IP 前缀")
     p_check.add_argument("--cidr", action="append", help="期望匹配的 CIDR 网段")
