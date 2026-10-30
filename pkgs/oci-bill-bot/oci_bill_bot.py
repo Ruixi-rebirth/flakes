@@ -311,6 +311,97 @@ def build_singbox_links() -> str:
     return "\n".join(lines)
 
 
+def _fmt_bytes(num_bytes: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(num_bytes) < 1024.0 or unit == "TB":
+            return f"{num_bytes:.2f} {unit}"
+        num_bytes /= 1024.0
+    return f"{num_bytes:.2f} TB"
+
+
+def _read_cpu_times() -> tuple[int, int]:
+    with open("/proc/stat", "r", encoding="utf-8") as f:
+        parts = [int(x) for x in f.readline().split()[1:]]
+    idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+    return sum(parts), idle
+
+
+def _read_net_bytes() -> tuple[int, int]:
+    rx_total = 0
+    tx_total = 0
+    with open("/proc/net/dev", "r", encoding="utf-8") as f:
+        for line in f.readlines()[2:]:
+            if ":" not in line:
+                continue
+            iface, data = line.split(":", 1)
+            iface = iface.strip()
+            if iface == "lo":
+                continue
+            fields = data.split()
+            rx_total += int(fields[0])
+            tx_total += int(fields[8])
+    return rx_total, tx_total
+
+
+def build_server_status() -> str:
+    t1, idle1 = _read_cpu_times()
+    time.sleep(0.1)
+    t2, idle2 = _read_cpu_times()
+    rx_bytes, tx_bytes = _read_net_bytes()
+
+    dt = max(1, t2 - t1)
+    cpu_pct = max(0.0, 100.0 * (1.0 - (idle2 - idle1) / dt))
+
+    with open("/proc/uptime", "r", encoding="utf-8") as f:
+        up_sec = int(float(f.read().split()[0]))
+    days, rem = divmod(up_sec, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins = rem // 60
+    uptime_str = f"{days}天 {hours}小时 {mins}分" if days else f"{hours}小时 {mins}分"
+
+    with open("/proc/loadavg", "r", encoding="utf-8") as f:
+        la = f.read().split()
+    load_str = f"{la[0]} / {la[1]} / {la[2]}"
+    cores = os.cpu_count() or 1
+
+    mem_info: dict[str, int] = {}
+    with open("/proc/meminfo", "r", encoding="utf-8") as f:
+        for line in f:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                mem_info[k.strip()] = int(v.split()[0]) * 1024
+    mem_total = mem_info.get("MemTotal", 1)
+    mem_avail = mem_info.get("MemAvailable", 0)
+    mem_used = max(0, mem_total - mem_avail)
+    mem_pct = 100.0 * mem_used / mem_total
+
+    swap_total = mem_info.get("SwapTotal", 0)
+    swap_free = mem_info.get("SwapFree", 0)
+    swap_used = max(0, swap_total - swap_free)
+
+    disk = shutil.disk_usage("/")
+    disk_pct = 100.0 * disk.used / max(1, disk.total)
+
+    sb_res = subprocess.run(
+        ["systemctl", "is-active", "sing-box"],
+        capture_output=True,
+        text=True,
+    )
+    sb_state = sb_res.stdout.strip() or "unknown"
+
+    return "\n".join(
+        [
+            "### OCI 服务器状态",
+            f"- **运行时长**: `{uptime_str}`",
+            f"- **CPU 状态**: `{cpu_pct:.1f}%` (`{cores}` 核) | 负载 `{load_str}`",
+            f"- **内存占用**: `{_fmt_bytes(mem_used)} / {_fmt_bytes(mem_total)}` (`{mem_pct:.1f}%`) | Swap `{_fmt_bytes(swap_used)} / {_fmt_bytes(swap_total)}`",
+            f"- **磁盘占用**: `{_fmt_bytes(disk.used)} / {_fmt_bytes(disk.total)}` (`{disk_pct:.1f}%`)",
+            f"- **累计流量**: `↓ {_fmt_bytes(rx_bytes)}` | `↑ {_fmt_bytes(tx_bytes)}`",
+            f"- **Sing-box**: `{sb_state}`",
+        ]
+    )
+
+
 class QQBotApp:
     def __init__(self, state_file: str, push_hour: int, push_minute: int) -> None:
         self.appid = get_secret(
@@ -533,13 +624,16 @@ class QQBotApp:
                 reply = await loop.run_in_executor(None, cleanup_unbound_ips)
             elif cmd == "oci_link":
                 reply = await loop.run_in_executor(None, build_singbox_links)
+            elif cmd == "oci_status":
+                reply = await loop.run_in_executor(None, build_server_status)
             else:
                 reply = (
                     "### OCI 助手\n"
                     "- `/oci_bill` : 查询账单与防扣费巡检\n"
                     "- `/oci_ip` : 查看预留 IP 状态\n"
                     "- `/oci_clean` : 释放未绑定预留 IP\n"
-                    "- `/oci_link` : 获取 sing-box 节点链接"
+                    "- `/oci_link` : 获取 sing-box 节点链接\n"
+                    "- `/oci_status` : 查看服务器实时负载与流量指标"
                 )
         except Exception as e:
             reply = f"### 执行出错\n- `{e}`"
