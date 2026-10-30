@@ -20,6 +20,8 @@
       oci_api_key.owner = me.userName;
       oci_user_ocid.owner = me.userName;
       oci_tenancy_ocid.owner = me.userName;
+      qq_bot_appid.owner = me.userName;
+      qq_bot_secret.owner = me.userName;
     };
   };
 
@@ -87,5 +89,20 @@
   environment.systemPackages = with pkgs; [
     antigravity-cli
     oci-ip
+    oci-bill-bot
   ];
+
+  systemd.services.oci-bill-bot = {
+    description = "QQ WebSocket OCI Daily Bill & Safety Bot";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      User = me.userName;
+      StateDirectory = "oci-bill-bot";
+      ExecStart = "${pkgs.oci-bill-bot}/bin/oci-bill-bot --state-file /var/lib/oci-bill-bot/state.json";
+      Restart = "always";
+      RestartSec = "5s";
+    };
+  };
 }

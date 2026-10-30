@@ -1,0 +1,701 @@
+#!/usr/bin/env python3
+"""
+oci-bill-bot: 基于 QQ 官方 WebSocket 的 OCI 每日账单与防扣费巡检机器人
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import datetime
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from collections import defaultdict
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import oci
+import requests
+import websockets
+from cryptography.hazmat.primitives import serialization
+
+DEFAULT_SOPS_KEY_PATH = "/run/secrets/oci_api_key"
+DEFAULT_SOPS_USER_PATH = "/run/secrets/oci_user_ocid"
+DEFAULT_SOPS_TENANCY_PATH = "/run/secrets/oci_tenancy_ocid"
+DEFAULT_SOPS_QQ_APPID_PATH = "/run/secrets/qq_bot_appid"
+DEFAULT_SOPS_QQ_SECRET_PATH = "/run/secrets/qq_bot_secret"
+DEFAULT_REGION = "ap-singapore-1"
+DEFAULT_STATE_FILE = "/var/lib/oci-bill-bot/state.json"
+
+QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
+QQ_API_BASE = "https://api.sgroup.qq.com"
+
+# Intents: GROUP_AND_C2C_EVENT (1<<25) | PUBLIC_GUILD_MESSAGES (1<<30) | DIRECT_MESSAGE (1<<12)
+DEFAULT_INTENTS = (1 << 25) | (1 << 30) | (1 << 12)
+
+
+def log(msg: str) -> None:
+    now_str = datetime.datetime.now(ZoneInfo("Asia/Singapore")).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+    print(f"[{now_str}] {msg}", flush=True)
+
+
+def read_secret_text(path: str) -> str | None:
+    expanded = os.path.expanduser(path)
+    if os.path.exists(expanded):
+        with open(expanded, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    return None
+
+
+def find_sops_yaml() -> str | None:
+    candidates = [
+        os.environ.get("OCI_SECRETS_YAML", ""),
+        os.path.abspath("secrets/secrets.yaml"),
+        os.path.expanduser("~/flakes/secrets/secrets.yaml"),
+        "/home/ruixi/flakes/secrets/secrets.yaml",
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def sops_decrypt_key(yaml_path: str | None, key_name: str) -> str | None:
+    if not yaml_path or not os.path.exists(yaml_path):
+        return None
+    env = os.environ.copy()
+    user_age_key = os.path.expanduser("~/.config/sops/age/keys.txt")
+    if (
+        "SOPS_AGE_KEY_FILE" not in env
+        and "SOPS_AGE_KEY" not in env
+        and not os.path.exists(user_age_key)
+        and os.path.exists("/var/lib/sops-nix/keys.txt")
+    ):
+        env["SOPS_AGE_KEY_FILE"] = "/var/lib/sops-nix/keys.txt"
+    try:
+        res = subprocess.run(
+            ["sops", "-d", "--extract", f'["{key_name}"]', yaml_path],
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+        return res.stdout.strip()
+    except Exception:
+        return None
+
+
+def get_secret(sops_path: str, key_name: str, env_name: str) -> str:
+    val = (
+        os.environ.get(env_name)
+        or read_secret_text(sops_path)
+        or sops_decrypt_key(find_sops_yaml(), key_name)
+    )
+    if not val:
+        raise RuntimeError(f"未能读取机密配置 {key_name} ({sops_path})")
+    return val
+
+
+def calc_oci_fingerprint(pem_bytes: bytes) -> str:
+    priv_key = serialization.load_pem_private_key(pem_bytes, password=None)
+    pub_der = priv_key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    md5_hex = hashlib.md5(pub_der).hexdigest()
+    return ":".join(md5_hex[i : i + 2] for i in range(0, len(md5_hex), 2))
+
+
+def get_oci_config() -> dict[str, Any]:
+    pem_str = get_secret(DEFAULT_SOPS_KEY_PATH, "oci_api_key", "OCI_KEY_CONTENT")
+    user_ocid = get_secret(DEFAULT_SOPS_USER_PATH, "oci_user_ocid", "OCI_USER_OCID")
+    tenancy_ocid = get_secret(
+        DEFAULT_SOPS_TENANCY_PATH, "oci_tenancy_ocid", "OCI_TENANCY_OCID"
+    )
+    region = os.environ.get("OCI_REGION", DEFAULT_REGION)
+    fingerprint = calc_oci_fingerprint(pem_str.encode("utf-8"))
+    config = {
+        "user": user_ocid,
+        "fingerprint": fingerprint,
+        "tenancy": tenancy_ocid,
+        "region": region,
+        "key_content": pem_str,
+    }
+    oci.config.validate_config(config)
+    return config
+
+
+def build_oci_bill_report() -> tuple[str, float]:
+    """
+    查询 OCI Usage API 与存储/IP 资源状态，生成简洁明了的账单与防扣费巡检报告。
+    返回 (report_text, today_or_latest_cost)。
+    """
+    config = get_oci_config()
+    tenancy = config["tenancy"]
+    usage_client = oci.usage_api.UsageapiClient(config)
+    vn_client = oci.core.VirtualNetworkClient(config)
+    bs_client = oci.core.BlockstorageClient(config)
+    id_client = oci.identity.IdentityClient(config)
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    month_start = datetime.datetime(
+        now_utc.year, now_utc.month, 1, 0, 0, 0, tzinfo=datetime.timezone.utc
+    )
+    tomorrow_start = datetime.datetime(
+        now_utc.year, now_utc.month, now_utc.day, 0, 0, 0, tzinfo=datetime.timezone.utc
+    ) + datetime.timedelta(days=1)
+
+    details = oci.usage_api.models.RequestSummarizedUsagesDetails(
+        tenant_id=tenancy,
+        time_usage_started=month_start,
+        time_usage_ended=tomorrow_start,
+        granularity="DAILY",
+        query_type="COST",
+        group_by=["service", "skuName"],
+    )
+    usage_data = usage_client.request_summarized_usages(details).data
+
+    by_service: dict[str, float] = defaultdict(float)
+    by_day: dict[str, float] = defaultdict(float)
+    nonzero_skus: list[str] = []
+    currency = "SGD"
+    month_total = 0.0
+
+    for item in usage_data.items:
+        amt = float(item.computed_amount or 0.0)
+        svc = item.service or "Other"
+        day_str = item.time_usage_started.strftime("%Y-%m-%d")
+        if item.currency and item.currency.strip():
+            currency = item.currency.strip()
+        by_service[svc] += amt
+        by_day[day_str] += amt
+        month_total += amt
+        if amt > 0.00001:
+            sku = item.sku_name or svc
+            nonzero_skus.append(f"  {day_str} {sku}: {amt:.4f} {currency}")
+
+    today_str = now_utc.strftime("%Y-%m-%d")
+    yesterday_str = (now_utc - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    today_cost = by_day.get(today_str, 0.0)
+    yesterday_cost = by_day.get(yesterday_str, 0.0)
+
+    # 防扣费资源巡检：检查引导卷/块存储容量与未绑定预留 IP
+    total_gb = 0
+    vol_count = 0
+    try:
+        ads = id_client.list_availability_domains(tenancy).data
+        for ad in ads:
+            bvs = bs_client.list_boot_volumes(
+                availability_domain=ad.name, compartment_id=tenancy
+            ).data
+            for bv in bvs:
+                if bv.lifecycle_state not in ("TERMINATED", "TERMINATING"):
+                    total_gb += int(bv.size_in_gbs or 0)
+                    vol_count += 1
+        vols = bs_client.list_volumes(compartment_id=tenancy).data
+        for v in vols:
+            if v.lifecycle_state not in ("TERMINATED", "TERMINATING"):
+                total_gb += int(v.size_in_gbs or 0)
+                vol_count += 1
+    except Exception:
+        pass
+
+    reserved_ips = vn_client.list_public_ips(
+        scope="REGION", compartment_id=tenancy, lifetime="RESERVED"
+    ).data
+    unbound_ips = [ip.ip_address for ip in reserved_ips if not ip.private_ip_id]
+    bound_ips = [ip.ip_address for ip in reserved_ips if ip.private_ip_id]
+
+    local_date = datetime.datetime.now(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d")
+    lines = [
+        f"OCI 账单日报 ({local_date})",
+        f"本月累计 : {month_total:.4f} {currency}",
+        f"今日费用 : {today_cost:.4f} {currency} (昨日: {yesterday_cost:.4f} {currency})",
+        "",
+        "服务明细 (本月):",
+    ]
+    if by_service:
+        for svc, amt in sorted(by_service.items()):
+            lines.append(f"  {svc}: {amt:.4f} {currency}")
+    else:
+        lines.append("  暂无账单记录")
+
+    if nonzero_skus:
+        lines.append("")
+        lines.append("非零扣费记录:")
+        lines.extend(nonzero_skus[-5:])
+
+    lines.append("")
+    lines.append("防扣费巡检:")
+    storage_warn = " [超免费额度!]" if total_gb > 200 else ""
+    lines.append(f"  存储占用 : {total_gb}/200 GB ({vol_count} 个卷){storage_warn}")
+    if unbound_ips:
+        lines.append(
+            f"  闲置预留IP: {len(unbound_ips)} 个 ({', '.join(unbound_ips)}) [注意:未绑定可能计费,发 /oci clean 可释放]"
+        )
+    else:
+        bound_str = ", ".join(bound_ips) if bound_ips else "无"
+        lines.append(f"  闲置预留IP: 0 个 (在用: {bound_str})")
+
+    if today_cost > 0.0001 or total_gb > 200 or unbound_ips:
+        lines.append("  结论     : 存在潜在计费项，请留意！")
+    else:
+        lines.append("  结论     : 正常 (今日 0 扣费)")
+
+    return "\n".join(lines), today_cost
+
+
+def build_oci_ip_summary() -> str:
+    config = get_oci_config()
+    tenancy = config["tenancy"]
+    vn_client = oci.core.VirtualNetworkClient(config)
+    reserved_ips = vn_client.list_public_ips(
+        scope="REGION", compartment_id=tenancy, lifetime="RESERVED"
+    ).data
+    lines = [f"OCI 预留 IP ({len(reserved_ips)}):"]
+    if not reserved_ips:
+        lines.append("  无")
+    for item in reserved_ips:
+        st = "已绑定" if item.private_ip_id else "未绑定(闲置)"
+        lines.append(f"  {item.ip_address}  [{st}]  {item.display_name or '-'}")
+    return "\n".join(lines)
+
+
+def cleanup_unbound_ips() -> str:
+    config = get_oci_config()
+    tenancy = config["tenancy"]
+    vn_client = oci.core.VirtualNetworkClient(config)
+    reserved_ips = vn_client.list_public_ips(
+        scope="REGION", compartment_id=tenancy, lifetime="RESERVED"
+    ).data
+    removed: list[str] = []
+    for item in reserved_ips:
+        if not item.private_ip_id and item.lifecycle_state in {"AVAILABLE", "UNASSIGNED"}:
+            vn_client.delete_public_ip(item.id)
+            removed.append(item.ip_address)
+    if not removed:
+        return "当前没有未绑定的闲置预留 IP，无需清理。"
+    return f"已释放 {len(removed)} 个未绑定预留 IP: {', '.join(removed)}"
+
+
+class QQBotApp:
+    def __init__(self, state_file: str, push_hour: int, push_minute: int) -> None:
+        self.appid = get_secret(
+            DEFAULT_SOPS_QQ_APPID_PATH, "qq_bot_appid", "QQ_BOT_APPID"
+        )
+        self.secret = get_secret(
+            DEFAULT_SOPS_QQ_SECRET_PATH, "qq_bot_secret", "QQ_BOT_SECRET"
+        )
+        self.state_file = state_file
+        self.push_hour = push_hour
+        self.push_minute = push_minute
+
+        self.access_token: str = ""
+        self.token_expires_at: float = 0.0
+        self.state: dict[str, Any] = self.load_state()
+
+    def load_state(self) -> dict[str, Any]:
+        if os.path.exists(self.state_file):
+            try:
+                with open(self.state_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def save_state(self) -> None:
+        parent = os.path.dirname(self.state_file)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp = f"{self.state_file}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.state, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, self.state_file)
+
+    def ensure_token(self) -> str:
+        now = time.time()
+        if self.access_token and now < self.token_expires_at - 120:
+            return self.access_token
+        resp = requests.post(
+            QQ_TOKEN_URL,
+            json={"appId": self.appid, "clientSecret": self.secret},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self.access_token = data["access_token"]
+        self.token_expires_at = now + int(data.get("expires_in", 7200))
+        return self.access_token
+
+    def api_headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"QQBot {self.ensure_token()}",
+            "Content-Type": "application/json",
+        }
+
+    def get_gateway_url(self) -> str:
+        resp = requests.get(
+            f"{QQ_API_BASE}/gateway", headers=self.api_headers(), timeout=10
+        )
+        resp.raise_for_status()
+        return resp.json()["url"]
+
+    def send_message(
+        self,
+        target: dict[str, Any],
+        content: str,
+        reply_msg_id: str | None = None,
+    ) -> bool:
+        t_type = target.get("type")
+        t_id = target.get("id")
+        if not t_type or not t_id:
+            return False
+
+        if t_type == "c2c":
+            url = f"{QQ_API_BASE}/v2/users/{t_id}/messages"
+        elif t_type == "group":
+            url = f"{QQ_API_BASE}/v2/groups/{t_id}/messages"
+        elif t_type == "dms":
+            url = f"{QQ_API_BASE}/dms/{t_id}/messages"
+        elif t_type == "channel":
+            url = f"{QQ_API_BASE}/channels/{t_id}/messages"
+        else:
+            return False
+
+        seq = int(self.state.get("msg_seq", 1)) + 1
+        self.state["msg_seq"] = seq
+
+        # 优先附带 msg_id 发送，若 msg_id 过期或主动推送则不带 msg_id 重试
+        payloads: list[dict[str, Any]] = []
+        if reply_msg_id:
+            if t_type in ("c2c", "group"):
+                payloads.append(
+                    {
+                        "content": content,
+                        "msg_type": 0,
+                        "msg_id": reply_msg_id,
+                        "msg_seq": seq,
+                    }
+                )
+            else:
+                payloads.append({"content": content, "msg_id": reply_msg_id})
+
+        if t_type in ("c2c", "group"):
+            payloads.append({"content": content, "msg_type": 0, "msg_seq": seq})
+        else:
+            payloads.append({"content": content})
+
+        for body in payloads:
+            try:
+                r = requests.post(
+                    url, headers=self.api_headers(), json=body, timeout=10
+                )
+                if r.status_code in (200, 201, 202):
+                    return True
+                log(f"发送消息返回 {r.status_code}: {r.text}")
+            except Exception as e:
+                log(f"发送消息异常: {e}")
+        return False
+
+    async def handle_user_command(
+        self, target: dict[str, Any], raw_content: str, msg_id: str
+    ) -> None:
+        cmd = raw_content.strip()
+        # 去除 @机器人 前缀
+        if ">" in cmd:
+            cmd = cmd.split(">", 1)[-1].strip()
+        cmd_norm = cmd.lower().lstrip("/").strip()
+
+        # 仅响应以 oci 开头的指令（如 /oci, /oci bill, /oci ip, /oci clean, /oci help）
+        if not (cmd_norm == "oci" or cmd_norm.startswith("oci ")):
+            return
+
+        # 记录最近一次交互会话，供每日定时推送使用
+        is_first_bind = "target" not in self.state
+        self.state["target"] = target
+        self.state["last_msg_id"] = msg_id
+        self.save_state()
+
+        sub_cmd = cmd_norm[3:].strip() or "bill"
+        log(f"收到指令 [{target.get('type')}:{target.get('id')}]: /oci {sub_cmd}")
+
+        loop = asyncio.get_running_loop()
+        try:
+            if sub_cmd in ("ip", "status", "ls"):
+                reply = await loop.run_in_executor(None, build_oci_ip_summary)
+            elif sub_cmd in ("clean", "cleanup", "rm"):
+                reply = await loop.run_in_executor(None, cleanup_unbound_ips)
+            elif sub_cmd in ("help", "h", "?"):
+                reply = (
+                    "OCI 账单与防扣费助手\n"
+                    "- /oci bill  : 实时查询本月/今日 OCI 费用与防扣费巡检\n"
+                    "- /oci ip    : 查看当前预留 IP 绑定状态\n"
+                    "- /oci clean : 一键释放未绑定的闲置预留 IP\n"
+                    "- /oci help  : 查看本帮助说明\n"
+                    f"- 每日 {self.push_hour:02d}:{self.push_minute:02d} 自动推送账单日报"
+                )
+            elif sub_cmd in ("bill", ""):
+                report, _ = await loop.run_in_executor(None, build_oci_bill_report)
+                if is_first_bind:
+                    report += (
+                        f"\n\n[已绑定当前会话，每天 {self.push_hour:02d}:{self.push_minute:02d} 将自动向你推送账单]"
+                    )
+                reply = report
+            else:
+                reply = (
+                    f"未知子命令: /oci {sub_cmd}\n"
+                    "可用命令: /oci bill | /oci ip | /oci clean | /oci help"
+                )
+        except Exception as e:
+            reply = f"查询 OCI 接口出错: {e}"
+
+        await loop.run_in_executor(
+            None, self.send_message, target, reply, msg_id
+        )
+
+    async def scheduler_loop(self) -> None:
+        """后台定时任务：每天指定时间推送账单日报，且每小时巡检一次异常新增扣费。"""
+        tz = ZoneInfo("Asia/Singapore")
+        while True:
+            await asyncio.sleep(30)
+            target = self.state.get("target")
+            if not target:
+                continue
+
+            now = datetime.datetime.now(tz)
+            today_str = now.strftime("%Y-%m-%d")
+
+            # 每日定时日报
+            if (
+                now.hour == self.push_hour
+                and now.minute >= self.push_minute
+                and self.state.get("last_daily_push_date") != today_str
+            ):
+                log(f"触发每日定时账单推送 ({today_str})...")
+                loop = asyncio.get_running_loop()
+                try:
+                    report, _ = await loop.run_in_executor(None, build_oci_bill_report)
+                    ok_sent = await loop.run_in_executor(
+                        None,
+                        self.send_message,
+                        target,
+                        report,
+                        self.state.get("last_msg_id"),
+                    )
+                    if ok_sent:
+                        self.state["last_daily_push_date"] = today_str
+                        self.save_state()
+                        log("每日账单推送成功")
+                except Exception as e:
+                    log(f"每日账单推送失败: {e}")
+
+            # 每小时异常扣费监控：若今日产生新费用且尚未告警，立即推送预警
+            hour_key = now.strftime("%Y-%m-%d-%H")
+            if self.state.get("last_hourly_check") != hour_key:
+                self.state["last_hourly_check"] = hour_key
+                self.save_state()
+                loop = asyncio.get_running_loop()
+                try:
+                    report, today_cost = await loop.run_in_executor(
+                        None, build_oci_bill_report
+                    )
+                    alerted_cost = float(
+                        self.state.get("alerted_cost_by_day", {}).get(today_str, 0.0)
+                    )
+                    if today_cost > max(0.0001, alerted_cost + 0.0001):
+                        alert_msg = f"⚠️ [OCI 异常扣费预警]\n检测到今日新增费用: {today_cost:.4f}\n\n{report}"
+                        await loop.run_in_executor(
+                            None,
+                            self.send_message,
+                            target,
+                            alert_msg,
+                            self.state.get("last_msg_id"),
+                        )
+                        self.state.setdefault("alerted_cost_by_day", {})[
+                            today_str
+                        ] = today_cost
+                        self.save_state()
+                except Exception as e:
+                    log(f"每小时巡检异常: {e}")
+
+    async def ws_loop(self) -> None:
+        while True:
+            try:
+                loop = asyncio.get_running_loop()
+                gw_url = await loop.run_in_executor(None, self.get_gateway_url)
+                token = await loop.run_in_executor(None, self.ensure_token)
+                log(f"正在连接 QQ Bot WebSocket: {gw_url}")
+
+                async with websockets.connect(gw_url, ping_interval=None) as ws:
+                    hello_raw = await ws.recv()
+                    hello = json.loads(hello_raw)
+                    if hello.get("op") != 10:
+                        raise RuntimeError(f"未收到 Hello 包: {hello}")
+
+                    hb_interval = hello["d"]["heartbeat_interval"] / 1000.0
+                    last_seq: int | None = None
+
+                    identify_payload = {
+                        "op": 2,
+                        "d": {
+                            "token": f"QQBot {token}",
+                            "intents": DEFAULT_INTENTS,
+                            "shard": [0, 1],
+                            "properties": {
+                                "$os": "linux",
+                                "$browser": "oci-bill-bot",
+                                "$device": "oci-bill-bot",
+                            },
+                        },
+                    }
+                    await ws.send(json.dumps(identify_payload))
+
+                    async def heartbeat_task() -> None:
+                        while True:
+                            await asyncio.sleep(hb_interval)
+                            await ws.send(json.dumps({"op": 1, "d": last_seq}))
+
+                    hb_fut = asyncio.create_task(heartbeat_task())
+                    try:
+                        async for raw_msg in ws:
+                            packet = json.loads(raw_msg)
+                            op = packet.get("op")
+                            if packet.get("s") is not None:
+                                last_seq = packet["s"]
+
+                            if op == 11:
+                                # Heartbeat ACK
+                                continue
+                            if op == 7:
+                                log("收到服务端 Reconnect 通知，准备重连...")
+                                break
+                            if op == 9:
+                                log(f"收到 Invalid Session: {packet}")
+                                break
+                            if op == 0:
+                                event_type = packet.get("t")
+                                d = packet.get("d") or {}
+                                if event_type == "READY":
+                                    bot_name = (d.get("user") or {}).get(
+                                        "username", "Bot"
+                                    )
+                                    log(
+                                        f"WebSocket 鉴权成功！当前机器人: {bot_name} (等待接收消息以绑定推送目标)"
+                                    )
+                                elif event_type == "C2C_MESSAGE_CREATE":
+                                    openid = (d.get("author") or {}).get(
+                                        "user_openid"
+                                    ) or (d.get("author") or {}).get("id")
+                                    content = d.get("content", "")
+                                    msg_id = d.get("id", "")
+                                    if openid:
+                                        asyncio.create_task(
+                                            self.handle_user_command(
+                                                {"type": "c2c", "id": openid},
+                                                content,
+                                                msg_id,
+                                            )
+                                        )
+                                elif event_type == "GROUP_AT_MESSAGE_CREATE":
+                                    group_openid = d.get("group_openid") or d.get(
+                                        "group_id"
+                                    )
+                                    content = d.get("content", "")
+                                    msg_id = d.get("id", "")
+                                    if group_openid:
+                                        asyncio.create_task(
+                                            self.handle_user_command(
+                                                {"type": "group", "id": group_openid},
+                                                content,
+                                                msg_id,
+                                            )
+                                        )
+                                elif event_type == "AT_MESSAGE_CREATE":
+                                    channel_id = d.get("channel_id")
+                                    content = d.get("content", "")
+                                    msg_id = d.get("id", "")
+                                    if channel_id:
+                                        asyncio.create_task(
+                                            self.handle_user_command(
+                                                {"type": "channel", "id": channel_id},
+                                                content,
+                                                msg_id,
+                                            )
+                                        )
+                                elif event_type == "DIRECT_MESSAGE_CREATE":
+                                    guild_id = d.get("guild_id")
+                                    content = d.get("content", "")
+                                    msg_id = d.get("id", "")
+                                    if guild_id:
+                                        asyncio.create_task(
+                                            self.handle_user_command(
+                                                {"type": "dms", "id": guild_id},
+                                                content,
+                                                msg_id,
+                                            )
+                                        )
+                    finally:
+                        hb_fut.cancel()
+
+            except Exception as e:
+                log(f"WebSocket 连接断开 ({e})，5 秒后重连...")
+                await asyncio.sleep(5)
+
+    async def run(self) -> None:
+        await asyncio.gather(
+            self.ws_loop(),
+            self.scheduler_loop(),
+        )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="oci-bill-bot",
+        description="QQ 官方 WebSocket OCI 每日账单与防扣费巡检机器人",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=os.environ.get("OCI_BOT_STATE_FILE", DEFAULT_STATE_FILE),
+        help=f"状态保存文件路径 (默认: {DEFAULT_STATE_FILE})",
+    )
+    parser.add_argument(
+        "--push-hour",
+        type=int,
+        default=int(os.environ.get("OCI_BOT_PUSH_HOUR", "9")),
+        help="每日自动推送账单的小时 (0-23, 默认北京时间/新加坡时间 9 点)",
+    )
+    parser.add_argument(
+        "--push-minute",
+        type=int,
+        default=int(os.environ.get("OCI_BOT_PUSH_MINUTE", "0")),
+        help="每日自动推送账单的分钟 (0-59, 默认 0)",
+    )
+    parser.add_argument(
+        "--once-report",
+        action="store_true",
+        help="仅在终端生成并打印一次当前 OCI 账单日报（用于命令行快速自检）",
+    )
+    args = parser.parse_args()
+
+    if args.once_report:
+        report, _ = build_oci_bill_report()
+        print(report)
+        return 0
+
+    app = QQBotApp(
+        state_file=args.state_file,
+        push_hour=args.push_hour,
+        push_minute=args.push_minute,
+    )
+    asyncio.run(app.run())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

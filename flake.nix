@@ -108,7 +108,10 @@
               ];
             };
           };
-          packages.oci-ip = pkgs.callPackage ./pkgs/oci-ip { };
+          packages = {
+            oci-ip = pkgs.callPackage ./pkgs/oci-ip { };
+            oci-bill-bot = pkgs.callPackage ./pkgs/oci-bill-bot { };
+          };
           # used by the `nix fmt` command
           formatter = config.treefmt.build.wrapper;
         };

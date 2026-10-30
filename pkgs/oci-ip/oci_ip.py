@@ -17,6 +17,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -331,6 +332,82 @@ def fetch_scamalytics_score(ip: str, timeout: float = 6.0) -> int | None:
     return None
 
 
+def check_china_tcp(ip: str, port: int = 22) -> dict[str, Any]:
+    """
+    通过对比海外直连与 Globalping 中国大陆探针的 TCP 握手，检测该 IP 的指定端口是否被墙 (GFW 阻断)。
+    """
+    overseas_open = False
+    try:
+        with socket.create_connection((ip, port), timeout=2.5):
+            overseas_open = True
+    except OSError:
+        overseas_open = False
+
+    if not overseas_open:
+        return {"status": "closed", "port": port}
+
+    try:
+        resp = requests.post(
+            "https://api.globalping.io/v1/measurements",
+            json={
+                "type": "ping",
+                "target": ip,
+                "locations": [{"country": "CN"}],
+                "limit": 3,
+                "measurementOptions": {
+                    "protocol": "TCP",
+                    "port": port,
+                    "packets": 2,
+                },
+            },
+            timeout=8.0,
+        )
+        if resp.status_code not in (200, 201, 202):
+            return {"status": "unknown", "port": port}
+        m_id = resp.json().get("id")
+        if not m_id:
+            return {"status": "unknown", "port": port}
+
+        deadline = time.time() + 18.0
+        data: dict[str, Any] = {}
+        while time.time() < deadline:
+            time.sleep(1.5)
+            r = requests.get(
+                f"https://api.globalping.io/v1/measurements/{m_id}", timeout=6.0
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") != "in-progress":
+                    break
+
+        results = data.get("results") or []
+        if not results:
+            return {"status": "unknown", "port": port}
+
+        ok_rtts: list[float] = []
+        total = len(results)
+        for item in results:
+            stats = (item.get("result") or {}).get("stats") or {}
+            rcv = int(stats.get("rcv") or 0)
+            avg = stats.get("avg")
+            if rcv > 0 and avg is not None:
+                ok_rtts.append(float(avg))
+
+        if not ok_rtts:
+            return {"status": "blocked", "port": port, "ok": 0, "total": total}
+
+        avg_ms = sum(ok_rtts) / len(ok_rtts)
+        return {
+            "status": "ok",
+            "port": port,
+            "ok": len(ok_rtts),
+            "total": total,
+            "avg_ms": round(avg_ms),
+        }
+    except requests.RequestException:
+        return {"status": "unknown", "port": port}
+
+
 def evaluate_ip_quality(
     ip: str,
     cidrs: list[str] | None = None,
@@ -343,6 +420,7 @@ def evaluate_ip_quality(
     reject_abuser: bool = False,
     allowed_countries: list[str] | None = None,
     check_cmd: str | None = None,
+    check_gfw_port: int | None = None,
 ) -> QualityReport:
     """多维度评估单个 IP 是否符合“优质 IP”条件。"""
     report = QualityReport(ip=ip)
@@ -436,6 +514,21 @@ def evaluate_ip_quality(
             )
         else:
             warn(f"无法获取 {ip} 的 Scamalytics 评分，跳过该项阈值对比")
+
+    # 国内 TCP 墙检 (GFW 阻断检测)
+    if check_gfw_port:
+        gfw_info = check_china_tcp(ip, port=check_gfw_port)
+        report.details["gfw"] = gfw_info
+        if gfw_info["status"] == "blocked":
+            report.passed = False
+            report.reasons.append(
+                f"国内 TCP {check_gfw_port} 被墙 (海外可连 / 国内探针 100% 阻断)"
+            )
+            return report
+        elif gfw_info["status"] == "ok":
+            report.reasons.append(
+                f"国内 TCP {check_gfw_port} 正常 ({gfw_info['ok']}/{gfw_info['total']} 节点连通, ~{gfw_info['avg_ms']}ms)"
+            )
 
     # 自定义外部检测命令（例如配合辅助私网 IP 实测 ping / 端口连通性）
     if check_cmd:
@@ -603,6 +696,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         reject_abuser=args.no_abuser,
         allowed_countries=args.country,
         check_cmd=args.check_cmd,
+        check_gfw_port=args.port,
     )
     badge = f"{GREEN}PASS{RESET}" if report.passed else f"{RED}FAIL{RESET}"
     d = report.details
@@ -610,11 +704,24 @@ def cmd_check(args: argparse.Namespace) -> int:
     score_str = f"{score}/100" if score is not None else "未知"
     proxy_str = f"{RED}是{RESET}" if d.get("is_proxy") else f"{GREEN}否{RESET}"
 
+    gfw = d.get("gfw") or {}
+    gfw_status = gfw.get("status")
+    gfw_port = gfw.get("port", args.port)
+    if gfw_status == "ok":
+        gfw_str = f"{GREEN}正常 ({gfw['ok']}/{gfw['total']} 节点连通, ~{gfw['avg_ms']}ms){RESET}"
+    elif gfw_status == "blocked":
+        gfw_str = f"{RED}被墙 (海外可连 / 国内 100% 丢包){RESET}"
+    elif gfw_status == "closed":
+        gfw_str = f"{YELLOW}端口未开放或 IP 未绑定主机 (无法测国内连通){RESET}"
+    else:
+        gfw_str = "未知"
+
     print(f"IP       : {args.ip} [{badge}]")
     print(f"地区     : {d.get('country', '-')} {d.get('city', '')}")
     print(f"ASN      : {d.get('asn', '-')}")
     print(f"代理标记 : {proxy_str}")
     print(f"欺诈评分 : {score_str}")
+    print(f"国内 TCP : {gfw_str} (端口 {gfw_port})")
     return 0 if report.passed else 1
 
 
@@ -960,8 +1067,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_bind.set_defaults(func=cmd_bind)
 
     # check
-    p_check = subparsers.add_parser("check", help="单独检测某个 IP 的纯净度、归属地与筛选规则")
+    p_check = subparsers.add_parser("check", help="单独检测某个 IP 的纯净度、归属地与国内 TCP 墙检")
     p_check.add_argument("ip", help="要检测的公网 IP 地址")
+    p_check.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=22,
+        help="检测国内 TCP 连通性的端口号 (默认: 22)",
+    )
     p_check.add_argument("--prefix", action="append", help="期望匹配的 IP 前缀")
     p_check.add_argument("--cidr", action="append", help="期望匹配的 CIDR 网段")
     p_check.add_argument("--exclude-prefix", action="append", help="排除的 IP 前缀")
