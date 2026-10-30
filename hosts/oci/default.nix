@@ -1,6 +1,9 @@
 { pkgs, ... }:
 {
-  imports = [ ./hardware-configuration.nix ];
+  imports = [
+    ./hardware-configuration.nix
+    ../../lib/disko_layout/single-device-ext4.nix
+  ];
 
   sops = {
     defaultSopsFile = ../../secrets/secrets.yaml;
@@ -16,17 +19,7 @@
     dhcpcd.extraConfig = ''
       nooption interface_mtu
     '';
-    firewall = {
-      enable = true;
-      allowedTCPPorts = [
-        22
-        443
-      ];
-      allowedUDPPorts = [
-        443
-        8443
-      ];
-    };
+    firewall.enable = true;
   };
 
   boot = {
@@ -40,10 +33,6 @@
       # BBR congestion control requires FQ (Fair Queueing) packet pacing
       "net.core.default_qdisc" = "fq";
       "net.ipv4.tcp_congestion_control" = "bbr";
-
-      # Enable packet forwarding for NAT port redirection
-      "net.ipv4.ip_forward" = 1;
-      "net.ipv6.conf.all.forwarding" = 1;
 
       # TCP window buffers tuned for BDP (1 Gbps @ 250ms RTT ≈ 31.25 MB)
       "net.core.rmem_max" = 33554432;
@@ -70,6 +59,13 @@
       "net.ipv4.tcp_keepalive_intvl" = 30;
       "net.ipv4.tcp_keepalive_probes" = 5;
     };
+  };
+
+  # Key-only SSH: the host is public-facing
+  services.openssh.settings = {
+    PasswordAuthentication = false;
+    PermitRootLogin = "no";
+    KbdInteractiveAuthentication = false;
   };
 
   # Enable zram swap for VPS

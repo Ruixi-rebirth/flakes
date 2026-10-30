@@ -5,7 +5,6 @@
 }:
 {
   imports = [
-    ../../lib/disko_layout/single-device-ext4.nix
     (modulesPath + "/profiles/qemu-guest.nix")
   ];
 
