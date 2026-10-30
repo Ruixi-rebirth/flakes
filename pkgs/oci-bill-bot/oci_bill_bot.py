@@ -11,6 +11,7 @@ import datetime
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ DEFAULT_SOPS_USER_PATH = "/run/secrets/oci_user_ocid"
 DEFAULT_SOPS_TENANCY_PATH = "/run/secrets/oci_tenancy_ocid"
 DEFAULT_SOPS_QQ_APPID_PATH = "/run/secrets/qq_bot_appid"
 DEFAULT_SOPS_QQ_SECRET_PATH = "/run/secrets/qq_bot_secret"
+DEFAULT_SOPS_QQ_OWNER_PATH = "/run/secrets/qq_bot_owner_openid"
 DEFAULT_REGION = "ap-singapore-1"
 DEFAULT_STATE_FILE = "/var/lib/oci-bill-bot/state.json"
 
@@ -48,8 +50,11 @@ def log(msg: str) -> None:
 def read_secret_text(path: str) -> str | None:
     expanded = os.path.expanduser(path)
     if os.path.exists(expanded):
-        with open(expanded, "r", encoding="utf-8") as f:
-            return f.read().strip()
+        try:
+            with open(expanded, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return None
     return None
 
 
@@ -214,39 +219,40 @@ def build_oci_bill_report() -> tuple[str, float]:
 
     local_date = datetime.datetime.now(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d")
     lines = [
-        f"OCI 账单日报 ({local_date})",
-        f"本月累计 : {month_total:.4f} {currency}",
-        f"今日费用 : {today_cost:.4f} {currency} (昨日: {yesterday_cost:.4f} {currency})",
+        f"### OCI 账单日报 ({local_date})",
+        f"- **本月累计**: `{month_total:.4f} {currency}`",
+        f"- **今日费用**: `{today_cost:.4f} {currency}` (昨日: `{yesterday_cost:.4f} {currency}`)",
         "",
-        "服务明细 (本月):",
+        "**服务明细 (本月)**",
     ]
     if by_service:
         for svc, amt in sorted(by_service.items()):
-            lines.append(f"  {svc}: {amt:.4f} {currency}")
+            lines.append(f"- {svc}: `{amt:.4f} {currency}`")
     else:
-        lines.append("  暂无账单记录")
+        lines.append("- 暂无账单记录")
 
     if nonzero_skus:
         lines.append("")
-        lines.append("非零扣费记录:")
-        lines.extend(nonzero_skus[-5:])
+        lines.append("**非零扣费记录**")
+        for item_line in nonzero_skus[-5:]:
+            lines.append(f"- {item_line.strip()}")
 
     lines.append("")
-    lines.append("防扣费巡检:")
-    storage_warn = " [超免费额度!]" if total_gb > 200 else ""
-    lines.append(f"  存储占用 : {total_gb}/200 GB ({vol_count} 个卷){storage_warn}")
+    lines.append("**防扣费巡检**")
+    storage_warn = " **[超免费额度!]**" if total_gb > 200 else ""
+    lines.append(f"- **存储占用**: `{total_gb}/200 GB` ({vol_count} 个卷){storage_warn}")
     if unbound_ips:
         lines.append(
-            f"  闲置预留IP: {len(unbound_ips)} 个 ({', '.join(unbound_ips)}) [注意:未绑定可能计费,发 /oci clean 可释放]"
+            f"- **闲置预留IP**: `{len(unbound_ips)}` 个 (`{', '.join(unbound_ips)}`) — 发 `/oci_clean` 可释放"
         )
     else:
         bound_str = ", ".join(bound_ips) if bound_ips else "无"
-        lines.append(f"  闲置预留IP: 0 个 (在用: {bound_str})")
+        lines.append(f"- **闲置预留IP**: `0` 个 (在用: `{bound_str}`)")
 
     if today_cost > 0.0001 or total_gb > 200 or unbound_ips:
-        lines.append("  结论     : 存在潜在计费项，请留意！")
+        lines.append("- **结论**: **存在潜在计费项，请留意！**")
     else:
-        lines.append("  结论     : 正常 (今日 0 扣费)")
+        lines.append("- **结论**: **正常 (今日 0 扣费)**")
 
     return "\n".join(lines), today_cost
 
@@ -258,12 +264,12 @@ def build_oci_ip_summary() -> str:
     reserved_ips = vn_client.list_public_ips(
         scope="REGION", compartment_id=tenancy, lifetime="RESERVED"
     ).data
-    lines = [f"OCI 预留 IP ({len(reserved_ips)}):"]
+    lines = [f"### OCI 预留 IP ({len(reserved_ips)})"]
     if not reserved_ips:
-        lines.append("  无")
+        lines.append("- 无")
     for item in reserved_ips:
         st = "已绑定" if item.private_ip_id else "未绑定(闲置)"
-        lines.append(f"  {item.ip_address}  [{st}]  {item.display_name or '-'}")
+        lines.append(f"- `{item.ip_address}` **{st}** ({item.display_name or '-'})")
     return "\n".join(lines)
 
 
@@ -280,8 +286,29 @@ def cleanup_unbound_ips() -> str:
             vn_client.delete_public_ip(item.id)
             removed.append(item.ip_address)
     if not removed:
-        return "当前没有未绑定的闲置预留 IP，无需清理。"
-    return f"已释放 {len(removed)} 个未绑定预留 IP: {', '.join(removed)}"
+        return "### 预留 IP 清理\n- 当前没有未绑定的闲置预留 IP，无需清理。"
+    return f"### 预留 IP 清理\n- 已释放 **{len(removed)}** 个未绑定预留 IP: `{', '.join(removed)}`"
+
+
+def build_singbox_links() -> str:
+    cmd_bin = shutil.which("singbox-links") or "/run/current-system/sw/bin/singbox-links"
+    res = subprocess.run(
+        [cmd_bin],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    lines = ["### Sing-box 节点"]
+    for raw in res.stdout.strip().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            lines.append(f"**{line.lstrip('#').strip()}**")
+        else:
+            lines.extend(["```text", line, "```"])
+    return "\n".join(lines)
 
 
 class QQBotApp:
@@ -292,6 +319,15 @@ class QQBotApp:
         self.secret = get_secret(
             DEFAULT_SOPS_QQ_SECRET_PATH, "qq_bot_secret", "QQ_BOT_SECRET"
         )
+        try:
+            self.owner_openid = get_secret(
+                DEFAULT_SOPS_QQ_OWNER_PATH,
+                "qq_bot_owner_openid",
+                "QQ_BOT_OWNER_OPENID",
+            )
+        except Exception:
+            self.owner_openid = ""
+
         self.state_file = state_file
         self.push_hour = push_hour
         self.push_minute = push_minute
@@ -299,6 +335,8 @@ class QQBotApp:
         self.access_token: str = ""
         self.token_expires_at: float = 0.0
         self.state: dict[str, Any] = self.load_state()
+        if not self.owner_openid and self.state.get("owner_openid"):
+            self.owner_openid = str(self.state["owner_openid"])
 
     def load_state(self) -> dict[str, Any]:
         if os.path.exists(self.state_file):
@@ -346,6 +384,65 @@ class QQBotApp:
         resp.raise_for_status()
         return resp.json()["url"]
 
+    def build_card_bodies(
+        self,
+        t_type: str,
+        content: str,
+        reply_msg_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """
+        优先使用 QQ 原生 Markdown 卡片 (msg_type=2) 渲染消息，支持代码块一键复制；
+        若接口受限则依次回退至 Ark 列表卡片 (msg_type=3) 与纯文本 (msg_type=0)。
+        """
+        raw_lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
+        title = raw_lines[0].lstrip("#").strip() if raw_lines else "OCI 账单通知"
+
+        ark_23 = {
+            "template_id": 23,
+            "kv": [
+                {"key": "#DESC#", "value": title},
+                {"key": "#PROMPT#", "value": title},
+                {
+                    "key": "#LIST#",
+                    "obj": [
+                        {"obj_kv": [{"key": "desc", "value": line}]}
+                        for line in raw_lines
+                    ],
+                },
+            ],
+        }
+
+        def attach_meta(base: dict[str, Any], with_reply: bool) -> dict[str, Any]:
+            seq = int(self.state.get("msg_seq", 1)) + 1
+            self.state["msg_seq"] = seq
+            pkt = dict(base)
+            if t_type in ("c2c", "group"):
+                pkt["msg_seq"] = seq
+            if with_reply and reply_msg_id:
+                pkt["msg_id"] = reply_msg_id
+            return pkt
+
+        candidates: list[dict[str, Any]] = []
+        with_reply_modes = [True, False] if reply_msg_id else [False]
+
+        if t_type in ("channel", "dms"):
+            for wr in with_reply_modes:
+                candidates.append(attach_meta({"markdown": {"content": content}}, wr))
+                candidates.append(attach_meta({"ark": ark_23}, wr))
+                candidates.append(attach_meta({"content": content}, wr))
+            return candidates
+
+        card_templates: list[dict[str, Any]] = [
+            {"msg_type": 2, "markdown": {"content": content}},
+            {"msg_type": 3, "ark": ark_23},
+            {"msg_type": 0, "content": content},
+        ]
+
+        for wr in with_reply_modes:
+            for tpl in card_templates:
+                candidates.append(attach_meta(tpl, wr))
+        return candidates
+
     def send_message(
         self,
         target: dict[str, Any],
@@ -368,92 +465,84 @@ class QQBotApp:
         else:
             return False
 
-        seq = int(self.state.get("msg_seq", 1)) + 1
-        self.state["msg_seq"] = seq
-
-        # 优先附带 msg_id 发送，若 msg_id 过期或主动推送则不带 msg_id 重试
-        payloads: list[dict[str, Any]] = []
-        if reply_msg_id:
-            if t_type in ("c2c", "group"):
-                payloads.append(
-                    {
-                        "content": content,
-                        "msg_type": 0,
-                        "msg_id": reply_msg_id,
-                        "msg_seq": seq,
-                    }
-                )
-            else:
-                payloads.append({"content": content, "msg_id": reply_msg_id})
-
-        if t_type in ("c2c", "group"):
-            payloads.append({"content": content, "msg_type": 0, "msg_seq": seq})
-        else:
-            payloads.append({"content": content})
-
+        payloads = self.build_card_bodies(t_type, content, reply_msg_id)
         for body in payloads:
             try:
                 r = requests.post(
                     url, headers=self.api_headers(), json=body, timeout=10
                 )
                 if r.status_code in (200, 201, 202):
+                    self.save_state()
                     return True
-                log(f"发送消息返回 {r.status_code}: {r.text}")
+                log(
+                    f"消息发送 (msg_type={body.get('msg_type', 'markdown')}) 返回 {r.status_code}: {r.text}"
+                )
             except Exception as e:
                 log(f"发送消息异常: {e}")
         return False
 
     async def handle_user_command(
-        self, target: dict[str, Any], raw_content: str, msg_id: str
+        self,
+        target: dict[str, Any],
+        sender_id: str,
+        raw_content: str,
+        msg_id: str,
     ) -> None:
-        cmd = raw_content.strip()
-        # 去除 @机器人 前缀
-        if ">" in cmd:
-            cmd = cmd.split(">", 1)[-1].strip()
-        cmd_norm = cmd.lower().lstrip("/").strip()
+        loop = asyncio.get_running_loop()
 
-        # 仅响应以 oci 开头的指令（如 /oci, /oci bill, /oci ip, /oci clean, /oci help）
-        if not (cmd_norm == "oci" or cmd_norm.startswith("oci ")):
+        # 权限校验：仅允许绑定的主人 OpenID 调用
+        if not self.owner_openid and sender_id:
+            self.owner_openid = sender_id
+            self.state["owner_openid"] = sender_id
+            self.save_state()
+
+        if self.owner_openid and sender_id != self.owner_openid:
+            log(f"拒绝非授权用户 [{sender_id}] 调用: {raw_content}")
+            await loop.run_in_executor(
+                None,
+                self.send_message,
+                target,
+                "### 权限不足\n- 此机器人为私人专属，仅限主人调用。",
+                msg_id,
+            )
             return
 
-        # 记录最近一次交互会话，供每日定时推送使用
+        cmd = raw_content.strip()
+        if ">" in cmd:
+            cmd = cmd.split(">", 1)[-1].strip()
+        cmd = "_".join(cmd.lower().lstrip("/").replace("_", " ").split())
+
         is_first_bind = "target" not in self.state
         self.state["target"] = target
         self.state["last_msg_id"] = msg_id
         self.save_state()
 
-        sub_cmd = cmd_norm[3:].strip() or "bill"
-        log(f"收到指令 [{target.get('type')}:{target.get('id')}]: /oci {sub_cmd}")
+        log(f"收到指令 [{target.get('type')}:{target.get('id')}]: /{cmd}")
 
-        loop = asyncio.get_running_loop()
         try:
-            if sub_cmd in ("ip", "status", "ls"):
-                reply = await loop.run_in_executor(None, build_oci_ip_summary)
-            elif sub_cmd in ("clean", "cleanup", "rm"):
-                reply = await loop.run_in_executor(None, cleanup_unbound_ips)
-            elif sub_cmd in ("help", "h", "?"):
-                reply = (
-                    "OCI 账单与防扣费助手\n"
-                    "- /oci bill  : 实时查询本月/今日 OCI 费用与防扣费巡检\n"
-                    "- /oci ip    : 查看当前预留 IP 绑定状态\n"
-                    "- /oci clean : 一键释放未绑定的闲置预留 IP\n"
-                    "- /oci help  : 查看本帮助说明\n"
-                    f"- 每日 {self.push_hour:02d}:{self.push_minute:02d} 自动推送账单日报"
-                )
-            elif sub_cmd in ("bill", ""):
+            if cmd == "oci_bill":
                 report, _ = await loop.run_in_executor(None, build_oci_bill_report)
                 if is_first_bind:
                     report += (
-                        f"\n\n[已绑定当前会话，每天 {self.push_hour:02d}:{self.push_minute:02d} 将自动向你推送账单]"
+                        f"\n\n> 已绑定当前会话，每天 `{self.push_hour:02d}:{self.push_minute:02d}` 自动向你推送账单"
                     )
                 reply = report
+            elif cmd == "oci_ip":
+                reply = await loop.run_in_executor(None, build_oci_ip_summary)
+            elif cmd == "oci_clean":
+                reply = await loop.run_in_executor(None, cleanup_unbound_ips)
+            elif cmd == "oci_link":
+                reply = await loop.run_in_executor(None, build_singbox_links)
             else:
                 reply = (
-                    f"未知子命令: /oci {sub_cmd}\n"
-                    "可用命令: /oci bill | /oci ip | /oci clean | /oci help"
+                    "### OCI 助手\n"
+                    "- `/oci_bill` : 查询账单与防扣费巡检\n"
+                    "- `/oci_ip` : 查看预留 IP 状态\n"
+                    "- `/oci_clean` : 释放未绑定预留 IP\n"
+                    "- `/oci_link` : 获取 sing-box 节点链接"
                 )
         except Exception as e:
-            reply = f"查询 OCI 接口出错: {e}"
+            reply = f"### 执行出错\n- `{e}`"
 
         await loop.run_in_executor(
             None, self.send_message, target, reply, msg_id
@@ -589,20 +678,27 @@ class QQBotApp:
                                         f"WebSocket 鉴权成功！当前机器人: {bot_name} (等待接收消息以绑定推送目标)"
                                     )
                                 elif event_type == "C2C_MESSAGE_CREATE":
-                                    openid = (d.get("author") or {}).get(
-                                        "user_openid"
-                                    ) or (d.get("author") or {}).get("id")
+                                    author = d.get("author") or {}
+                                    openid = author.get("user_openid") or author.get("id") or ""
                                     content = d.get("content", "")
                                     msg_id = d.get("id", "")
                                     if openid:
                                         asyncio.create_task(
                                             self.handle_user_command(
                                                 {"type": "c2c", "id": openid},
+                                                openid,
                                                 content,
                                                 msg_id,
                                             )
                                         )
                                 elif event_type == "GROUP_AT_MESSAGE_CREATE":
+                                    author = d.get("author") or {}
+                                    sender_id = (
+                                        author.get("member_openid")
+                                        or author.get("user_openid")
+                                        or author.get("id")
+                                        or ""
+                                    )
                                     group_openid = d.get("group_openid") or d.get(
                                         "group_id"
                                     )
@@ -612,11 +708,14 @@ class QQBotApp:
                                         asyncio.create_task(
                                             self.handle_user_command(
                                                 {"type": "group", "id": group_openid},
+                                                sender_id,
                                                 content,
                                                 msg_id,
                                             )
                                         )
                                 elif event_type == "AT_MESSAGE_CREATE":
+                                    author = d.get("author") or {}
+                                    sender_id = author.get("id") or ""
                                     channel_id = d.get("channel_id")
                                     content = d.get("content", "")
                                     msg_id = d.get("id", "")
@@ -624,11 +723,14 @@ class QQBotApp:
                                         asyncio.create_task(
                                             self.handle_user_command(
                                                 {"type": "channel", "id": channel_id},
+                                                sender_id,
                                                 content,
                                                 msg_id,
                                             )
                                         )
                                 elif event_type == "DIRECT_MESSAGE_CREATE":
+                                    author = d.get("author") or {}
+                                    sender_id = author.get("id") or ""
                                     guild_id = d.get("guild_id")
                                     content = d.get("content", "")
                                     msg_id = d.get("id", "")
@@ -636,6 +738,7 @@ class QQBotApp:
                                         asyncio.create_task(
                                             self.handle_user_command(
                                                 {"type": "dms", "id": guild_id},
+                                                sender_id,
                                                 content,
                                                 msg_id,
                                             )

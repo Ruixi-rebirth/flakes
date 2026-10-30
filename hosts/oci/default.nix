@@ -22,6 +22,7 @@
       oci_tenancy_ocid.owner = me.userName;
       qq_bot_appid.owner = me.userName;
       qq_bot_secret.owner = me.userName;
+      qq_bot_owner_openid.owner = me.userName;
     };
   };
 

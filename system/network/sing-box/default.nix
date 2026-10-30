@@ -1,6 +1,7 @@
 {
   config,
   pkgs,
+  me,
   ...
 }:
 let
@@ -38,9 +39,9 @@ let
 in
 {
   sops.secrets = {
-    singbox_uuid = { };
+    singbox_uuid.owner = me.userName;
     singbox_reality_private_key = { };
-    singbox_hy2_password = { };
+    singbox_hy2_password.owner = me.userName;
     singbox_hy2_cert.owner = "sing-box";
     singbox_hy2_key.owner = "sing-box";
   };
