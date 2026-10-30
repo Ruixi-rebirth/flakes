@@ -10,18 +10,39 @@ let
   realityPort = 443;
   hy2Port = 8443;
 
-  # Derived from the sing-box user instead of hardcoding /var/lib/sing-box
-  stateDir = config.users.users.sing-box.home;
-  certFile = "${stateDir}/cert.pem";
-  keyFile = "${stateDir}/key.pem";
+  # Hysteria 2 certificate/key are kept in sops so the pinned fingerprint is identical on every machine
+  certFile = config.sops.secrets.singbox_hy2_cert.path;
+  keyFile = config.sops.secrets.singbox_hy2_key.path;
 
   secretPath = name: { _secret = config.sops.secrets.${name}.path; };
+
+  mkHy2 =
+    { tag, port }:
+    {
+      type = "hysteria2";
+      inherit tag;
+      listen = "::";
+      listen_port = port;
+      users = [
+        {
+          password = secretPath "singbox_hy2_password";
+        }
+      ];
+      tls = {
+        enabled = true;
+        certificate_path = certFile;
+        key_path = keyFile;
+      };
+      masquerade = "https://bing.com";
+    };
 in
 {
   sops.secrets = {
     singbox_uuid = { };
     singbox_reality_private_key = { };
     singbox_hy2_password = { };
+    singbox_hy2_cert.owner = "sing-box";
+    singbox_hy2_key.owner = "sing-box";
   };
 
   environment.systemPackages = [
@@ -36,15 +57,16 @@ in
       uuid=$(cat ${config.sops.secrets.singbox_uuid.path})
       hy2=$(cat ${config.sops.secrets.singbox_hy2_password.path})
       hy2_enc=$(printf %s "$hy2" | ${pkgs.jq}/bin/jq -sRr @uri)
+      pin=$(${pkgs.openssl}/bin/openssl x509 -noout -fingerprint -sha256 -in ${certFile} | cut -d= -f2)
 
       vless="vless://''${uuid}@''${host}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&type=tcp#OCI-VLESS-Reality"
-      hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&insecure=1&mport=${toString realityPort},${toString hy2Port}#OCI-Hysteria2-443"
-      hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&insecure=1&mport=${toString hy2Port},${toString realityPort}#OCI-Hysteria2-8443"
+      hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&pinSHA256=''${pin}#OCI-Hysteria2-443"
+      hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${pin}#OCI-Hysteria2-8443"
 
       echo "# VLESS + Reality (TCP ${toString realityPort})"
       echo "$vless"
       echo
-      echo "# Hysteria 2 (UDP 443)"
+      echo "# Hysteria 2 (UDP ${toString realityPort}), cert pinned"
       echo "$hy443"
       echo
       echo "# Hysteria 2 (UDP ${toString hy2Port})"
@@ -57,7 +79,7 @@ in
     package = pkgs.sing-box;
     settings = {
       log = {
-        level = "info";
+        level = "warn";
         timestamp = true;
       };
       inbounds = [
@@ -85,22 +107,21 @@ in
             };
           };
         }
+      ]
+      ++ map mkHy2 [
         {
-          type = "hysteria2";
           tag = "hy2-in";
-          listen = "::";
-          listen_port = hy2Port;
-          users = [
-            {
-              password = secretPath "singbox_hy2_password";
-            }
-          ];
-          tls = {
-            enabled = true;
-            certificate_path = certFile;
-            key_path = keyFile;
-          };
-          masquerade = "https://bing.com";
+          port = hy2Port;
+        }
+        {
+          tag = "hy2-443-in";
+          port = realityPort;
+        }
+      ];
+      dns.servers = [
+        {
+          type = "local";
+          tag = "local";
         }
       ];
       outbounds = [
@@ -108,20 +129,18 @@ in
           type = "direct";
           tag = "direct";
         }
-        {
-          type = "block";
-          tag = "block";
-        }
       ];
       route = {
+        default_domain_resolver = "local";
         rules = [
+          { action = "sniff"; }
           {
             ip_is_private = true;
-            outbound = "block";
+            action = "reject";
           }
           {
             port = 25;
-            outbound = "block";
+            action = "reject";
           }
         ];
       };
@@ -133,30 +152,12 @@ in
     AmbientCapabilities = [ "CAP_NET_BIND_SERVICE" ];
     CapabilityBoundingSet = [ "CAP_NET_BIND_SERVICE" ];
     LimitNOFILE = 1048576;
-  };
-
-  # Generate self-signed certificate for Hysteria 2 before sing-box starts
-  systemd.services.sing-box-certs = {
-    description = "Generate self-signed certificate for sing-box Hysteria 2";
-    wantedBy = [ "sing-box.service" ];
-    before = [ "sing-box.service" ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      StateDirectory = "sing-box";
-      StateDirectoryMode = "0700";
-    };
-    script = ''
-      if [ ! -f "${certFile}" ] || [ ! -f "${keyFile}" ]; then
-        ${pkgs.openssl}/bin/openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-          -nodes -keyout "${keyFile}" \
-          -out "${certFile}" -days 3650 \
-          -subj "/CN=bing.com"
-        chown sing-box:sing-box "${keyFile}" "${certFile}"
-        chmod 600 "${keyFile}"
-        chmod 644 "${certFile}"
-      fi
-    '';
+    NoNewPrivileges = true;
+    ProtectHome = true;
+    PrivateTmp = true;
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectControlGroups = true;
   };
 
   # Firewall rules for sing-box
@@ -168,18 +169,12 @@ in
     ];
     extraCommands = ''
       # TCP MSS Clamping to prevent Path MTU black holes
-      iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-      ip6tables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-
-      iptables -t nat -A PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
-      ip6tables -t nat -A PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
+      iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+      ip6tables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || ip6tables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
     '';
     extraStopCommands = ''
       iptables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
       ip6tables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
-
-      iptables -t nat -D PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
-      ip6tables -t nat -D PREROUTING -p udp --dport ${toString realityPort} -j REDIRECT --to-ports ${toString hy2Port} 2>/dev/null || true
     '';
   };
 }
