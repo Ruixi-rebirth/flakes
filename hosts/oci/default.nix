@@ -22,6 +22,8 @@
     firewall.enable = true;
   };
 
+  time.timeZone = "UTC";
+
   boot = {
     kernelPackages = pkgs.linuxPackages_latest;
     kernelModules = [ "tcp_bbr" ];
