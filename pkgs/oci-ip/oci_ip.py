@@ -250,18 +250,25 @@ def resolve_context(
                 except oci.exceptions.ServiceError:
                     pass
 
-    # 如果不在 OCI 实例本机上运行（远程模式），通过 OCI API 自动查找子网下的主私网 IP
+    # 如果不在 OCI 实例本机上运行（远程模式），优先从已绑定预留 IP 反查，再遍历子网下的主私网 IP
     if not priv_id and comp_id:
         try:
-            subnets = client.list_subnets(compartment_id=comp_id).data
-            for subnet in subnets:
-                priv_ips = client.list_private_ips(subnet_id=subnet.id).data
-                for p in priv_ips:
-                    if p.is_primary:
-                        priv_id = p.id
-                        break
-                if priv_id:
+            for item in client.list_public_ips(
+                scope="REGION", compartment_id=comp_id, lifetime="RESERVED"
+            ).data:
+                if item.private_ip_id:
+                    priv_id = item.private_ip_id
                     break
+            if not priv_id:
+                subnets = client.list_subnets(compartment_id=comp_id).data
+                for subnet in subnets:
+                    priv_ips = client.list_private_ips(subnet_id=subnet.id).data
+                    for p in priv_ips:
+                        if p.is_primary:
+                            priv_id = p.id
+                            break
+                    if priv_id:
+                        break
         except oci.exceptions.ServiceError:
             pass
 
@@ -547,6 +554,94 @@ def evaluate_ip_quality(
     return report
 
 
+def ensure_service_gateway(
+    client: oci.core.VirtualNetworkClient,
+    private_ip_id: str,
+) -> None:
+    """
+    确保目标网卡所在 VCN 已挂载免费的 Oracle Services Network 服务网关 (Service Gateway) 并配置路由：
+    防止在实例本机执行解绑旧公网 IP 时，因短暂失去公网 IPv4 而导致后续绑定新 IP 的 OCI API 请求断网超时。
+    """
+    try:
+        priv_obj = client.get_private_ip(private_ip_id).data
+        subnet = client.get_subnet(priv_obj.subnet_id).data
+        comp_id = subnet.compartment_id
+        vcn_id = subnet.vcn_id
+        rt_id = subnet.route_table_id
+
+        services = client.list_services().data
+        target_svc = None
+        for svc in services:
+            cb = (svc.cidr_block or "").lower()
+            if cb.startswith("all-") and cb.endswith(
+                "-services-in-oracle-services-network"
+            ):
+                target_svc = svc
+                break
+        if not target_svc and services:
+            target_svc = services[0]
+        if not target_svc:
+            return
+
+        sgws = [
+            s
+            for s in client.list_service_gateways(
+                compartment_id=comp_id, vcn_id=vcn_id
+            ).data
+            if s.lifecycle_state not in ("TERMINATING", "TERMINATED")
+        ]
+        if sgws:
+            sgw = sgws[0]
+            existing_svc_ids = {s.service_id for s in (sgw.services or [])}
+            if target_svc.id not in existing_svc_ids:
+                client.attach_service_id(
+                    sgw.id,
+                    oci.core.models.ServiceIdRequestDetails(service_id=target_svc.id),
+                )
+        else:
+            sgw = client.create_service_gateway(
+                oci.core.models.CreateServiceGatewayDetails(
+                    compartment_id=comp_id,
+                    vcn_id=vcn_id,
+                    display_name="oci-internal-sgw",
+                    services=[
+                        oci.core.models.ServiceIdRequestDetails(
+                            service_id=target_svc.id
+                        )
+                    ],
+                )
+            ).data
+            for _ in range(20):
+                if sgw.lifecycle_state == "AVAILABLE":
+                    break
+                time.sleep(1.0)
+                sgw = client.get_service_gateway(sgw.id).data
+
+        if rt_id:
+            rt = client.get_route_table(rt_id).data
+            rules = list(rt.route_rules or [])
+            has_sgw_rule = any(
+                r.destination == target_svc.cidr_block
+                or r.network_entity_id == sgw.id
+                for r in rules
+            )
+            if not has_sgw_rule:
+                rules.append(
+                    oci.core.models.RouteRule(
+                        destination=target_svc.cidr_block,
+                        destination_type="SERVICE_CIDR_BLOCK",
+                        network_entity_id=sgw.id,
+                        description="Oracle Services Network internal routing",
+                    )
+                )
+                client.update_route_table(
+                    rt_id,
+                    oci.core.models.UpdateRouteTableDetails(route_rules=rules),
+                )
+    except Exception:
+        pass
+
+
 def bind_reserved_ip_to_private_ip(
     client: oci.core.VirtualNetworkClient,
     reserved_ip_id: str,
@@ -559,6 +654,7 @@ def bind_reserved_ip_to_private_ip(
     - 若目标私网 IP 当前绑定了另一个预留公网 IP (RESERVED)，先将其解绑（可选删除）；
     - 然后将新的预留公网 IP 绑定到目标私网 IP。
     """
+    ensure_service_gateway(client, private_ip_id)
     existing_pub: oci.core.models.PublicIp | None = None
     try:
         existing_pub = client.get_public_ip_by_private_ip_id(
