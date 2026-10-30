@@ -1,4 +1,8 @@
-{ pkgs, ... }:
+{
+  pkgs,
+  me,
+  ...
+}:
 {
   imports = [
     ./hardware-configuration.nix
@@ -12,6 +16,11 @@
       sshKeyPaths = [ ];
       keyFile = "/var/lib/sops-nix/keys.txt";
     };
+    secrets = {
+      oci_api_key.owner = me.userName;
+      oci_user_ocid.owner = me.userName;
+      oci_tenancy_ocid.owner = me.userName;
+    };
   };
 
   networking = {
@@ -21,8 +30,7 @@
     '';
     firewall.enable = true;
   };
-
-  time.timeZone = "UTC";
+  time.timeZone = "Asia/Singapore";
 
   boot = {
     kernelPackages = pkgs.linuxPackages_latest;
@@ -78,5 +86,6 @@
 
   environment.systemPackages = with pkgs; [
     antigravity-cli
+    oci-ip
   ];
 }

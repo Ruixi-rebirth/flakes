@@ -108,6 +108,7 @@
               ];
             };
           };
+          packages.oci-ip = pkgs.callPackage ./pkgs/oci-ip { };
           # used by the `nix fmt` command
           formatter = config.treefmt.build.wrapper;
         };

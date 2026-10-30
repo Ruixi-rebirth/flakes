@@ -28,6 +28,5 @@
       pkiBundle = "/etc/secureboot";
     };
     consoleLogLevel = 0;
-    initrd.verbose = false;
   };
 }
