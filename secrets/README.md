@@ -30,8 +30,8 @@ Only needs to be done once; the same values work on every machine.
 
 ### Hysteria 2 certificate
 
-Self-signed; clients verify it by pinned fingerprint (`singbox-links` prints it), so
-keeping the same cert in sops means the client links never change.
+Self-signed; clients connect with `insecure=1`. Keeping the cert/key in sops means a new
+machine needs no manual cert generation.
 
 ```bash
 d=$(mktemp -d)

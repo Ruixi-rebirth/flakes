@@ -10,7 +10,7 @@ let
   realityPort = 443;
   hy2Port = 8443;
 
-  # Hysteria 2 certificate/key are kept in sops so the pinned fingerprint is identical on every machine
+  # Hysteria 2 certificate/key are kept in sops so a new machine needs no manual cert generation
   certFile = config.sops.secrets.singbox_hy2_cert.path;
   keyFile = config.sops.secrets.singbox_hy2_key.path;
 
@@ -57,16 +57,15 @@ in
       uuid=$(cat ${config.sops.secrets.singbox_uuid.path})
       hy2=$(cat ${config.sops.secrets.singbox_hy2_password.path})
       hy2_enc=$(printf %s "$hy2" | ${pkgs.jq}/bin/jq -sRr @uri)
-      pin=$(${pkgs.openssl}/bin/openssl x509 -noout -fingerprint -sha256 -in ${certFile} | cut -d= -f2)
 
       vless="vless://''${uuid}@''${host}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&type=tcp#OCI-VLESS-Reality"
-      hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&pinSHA256=''${pin}#OCI-Hysteria2-443"
-      hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${pin}#OCI-Hysteria2-8443"
+      hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&insecure=1#OCI-Hysteria2-443"
+      hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&insecure=1#OCI-Hysteria2-8443"
 
       echo "# VLESS + Reality (TCP ${toString realityPort})"
       echo "$vless"
       echo
-      echo "# Hysteria 2 (UDP ${toString realityPort}), cert pinned"
+      echo "# Hysteria 2 (UDP ${toString realityPort})"
       echo "$hy443"
       echo
       echo "# Hysteria 2 (UDP ${toString hy2Port})"
