@@ -99,9 +99,22 @@
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];
-    path = config.environment.systemPackages;
+    path =
+      with pkgs;
+      [
+        bash
+        git
+        nix
+        coreutils
+        systemd
+      ]
+      ++ config.environment.systemPackages;
+    environment = {
+      HOME = "/home/${me.userName}";
+    };
     serviceConfig = {
       User = me.userName;
+      WorkingDirectory = "/home/${me.userName}";
       StateDirectory = "oci-bill-bot";
       ExecStart = "${pkgs.oci-bill-bot}/bin/oci-bill-bot --state-file /var/lib/oci-bill-bot/state.json";
       Restart = "always";

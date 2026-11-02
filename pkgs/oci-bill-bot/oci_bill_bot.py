@@ -36,6 +36,7 @@ DEFAULT_STATE_FILE = "/var/lib/oci-bill-bot/state.json"
 
 QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
 QQ_API_BASE = "https://api.sgroup.qq.com"
+QQ_ATTACHMENTS_DIR = "/home/ruixi/.cache/qq_attachments"
 
 # Intents: GROUP_AND_C2C_EVENT (1<<25) | PUBLIC_GUILD_MESSAGES (1<<30) | DIRECT_MESSAGE (1<<12)
 DEFAULT_INTENTS = (1 << 25) | (1 << 30) | (1 << 12)
@@ -260,10 +261,248 @@ def build_oci_bill_report() -> tuple[str, float]:
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 LOG_PREFIX_RE = re.compile(r"^\[(INFO|OK|WARN|ERR)\]\s*")
+FILE_LINK_RE = re.compile(r"\[([^\]]+)\]\(file://([^\)]+)\)")
+RAW_URL_RE = re.compile(r"(https?://[^\s\)>]+)")
+
+DEFAULT_AGY_MODEL = "gemini-4-argon-medium"
+DEFAULT_AGY_EFFORT = "medium"
+DEFAULT_AGY_CWD = "/home/ruixi"
+
+AGY_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+AGY_MODEL_CATALOG: list[tuple[str, str]] = [
+    ("gemini-4-argon-low", "Gemini 4 Argon (Low)"),
+    ("gemini-4-argon-medium", "Gemini 4 Argon (Medium)"),
+    ("gemini-4-argon-high", "Gemini 4 Argon (High)"),
+    ("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+    ("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
+    ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+    ("claude-opus-5-5-low", "Claude Opus 5.5 (Low)"),
+    ("claude-opus-5-5-medium", "Claude Opus 5.5 (Medium)"),
+    ("claude-opus-5-5-high", "Claude Opus 5.5 (High)"),
+    ("claude-sonnet-5-5-low", "Claude Sonnet 5.5 (Low)"),
+    ("claude-sonnet-5-5-medium", "Claude Sonnet 5.5 (Medium)"),
+    ("claude-sonnet-5-5-high", "Claude Sonnet 5.5 (High)"),
+    ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+]
+
+AGY_MODEL_FAMILIES: dict[str, str] = {
+    "argon": "gemini-4-argon",
+    "gemini": "gemini-4-argon",
+    "gemini-4-argon": "gemini-4-argon",
+    "flash": "gemini-3.8-flash",
+    "gemini-3.8-flash": "gemini-3.8-flash",
+    "opus": "claude-opus-5-5",
+    "claude-opus": "claude-opus-5-5",
+    "claude-opus-5-5": "claude-opus-5-5",
+    "sonnet": "claude-sonnet-5-5",
+    "claude-sonnet": "claude-sonnet-5-5",
+    "claude-sonnet-5-5": "claude-sonnet-5-5",
+}
+
+AGY_MODEL_ALIASES: dict[str, str] = {
+    "argon-low": "gemini-4-argon-low",
+    "argon-medium": "gemini-4-argon-medium",
+    "argon-high": "gemini-4-argon-high",
+    "flash-low": "gemini-3.8-flash-low",
+    "flash-medium": "gemini-3.8-flash-medium",
+    "flash-high": "gemini-3.8-flash-high",
+    "opus-low": "claude-opus-5-5-low",
+    "opus-medium": "claude-opus-5-5-medium",
+    "opus-high": "claude-opus-5-5-high",
+    "sonnet-low": "claude-sonnet-5-5-low",
+    "sonnet-medium": "claude-sonnet-5-5-medium",
+    "sonnet-high": "claude-sonnet-5-5-high",
+    "gpt": "gpt-oss-120b-medium",
+    "gpt-oss": "gpt-oss-120b-medium",
+}
+
+
+def _tier_for_effort(effort: str) -> str:
+    if effort == "low":
+        return "low"
+    if effort in ("high", "xhigh", "max"):
+        return "high"
+    return "medium"
+
+
+def resolve_agy_model(raw_model: str, current_effort: str) -> tuple[str, str | None]:
+    """
+    解析用户输入的模型名或简写，返回 (model_id, inferred_effort_or_None)。
+    """
+    key = raw_model.strip().lower()
+    if key in AGY_MODEL_ALIASES:
+        resolved = AGY_MODEL_ALIASES[key]
+    elif key in AGY_MODEL_FAMILIES:
+        prefix = AGY_MODEL_FAMILIES[key]
+        tier = _tier_for_effort(current_effort)
+        resolved = f"{prefix}-{tier}"
+    else:
+        resolved = key
+
+    inferred_effort: str | None = None
+    if resolved.endswith("-low"):
+        inferred_effort = "low"
+    elif resolved.endswith("-medium"):
+        inferred_effort = "medium"
+    elif resolved.endswith("-high") and current_effort not in ("high", "xhigh", "max"):
+        inferred_effort = "high"
+    return resolved, inferred_effort
+
+
+def sync_model_with_effort(current_model: str, new_effort: str) -> str:
+    """
+    当切换 effort 时，若当前模型属于支持 -low/-medium/-high 的家族，自动同步其后缀。
+    """
+    tier = _tier_for_effort(new_effort)
+    for suffix in ("-low", "-medium", "-high"):
+        if current_model.endswith(suffix):
+            base = current_model[: -len(suffix)]
+            candidate = f"{base}-{tier}"
+            known_ids = {m[0] for m in AGY_MODEL_CATALOG}
+            if candidate in known_ids:
+                return candidate
+    return current_model
+
+
+def _short_path(path: str) -> str:
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if path.startswith(home + "/"):
+        return "~/" + path[len(home) + 1 :]
+    return path
+
+
+def _sanitize_agy_markdown(text: str) -> str:
+    """
+    清理 ANSI 序列并将 file:// 链接转为普通代码标记，防止触发 QQ 机器人链接拦截。
+    """
+    cleaned = _strip_ansi(text).strip()
+
+    def _repl_file_link(m: re.Match[str]) -> str:
+        label = m.group(1).strip()
+        if label.startswith("`") and label.endswith("`"):
+            return label
+        return f"`{label}`"
+
+    cleaned = FILE_LINK_RE.sub(_repl_file_link, cleaned)
+    return cleaned
+
+
+def _neutralize_urls(text: str) -> str:
+    """
+    当消息因包含未报备外部 URL 被 QQ API 拦截时，将 http(s):// 中的点号转义后重试。
+    """
+    return RAW_URL_RE.sub(lambda m: m.group(1).replace(".", "[.]"), text)
 
 
 def _strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
+
+
+AGY_TIMEOUT_SECONDS = 600
+AGY_CHUNK_CHARS = 1200
+AGY_MAX_CHUNKS = 4
+
+KNOWN_COMMANDS = {
+    "help",
+    "oci_bill",
+    "oci_ip",
+    "oci_roll",
+    "oci_check",
+    "oci_bind",
+    "oci_clean",
+    "oci_link",
+    "oci_status",
+    "agy",
+    "agy_new",
+    "agy_cd",
+    "agy_model",
+    "agy_models",
+    "agy_effort",
+    "agy_status",
+    "agy_stop",
+    "agy_reset",
+}
+
+
+def _parse_agy_json(raw_text: str) -> dict[str, Any] | None:
+    text = raw_text.strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+
+    # 若输出中夹带了其他日志，从最后一行或倒找有效 JSON 对象
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                data = json.loads(line)
+                if isinstance(data, dict) and "response" in data:
+                    return data
+            except Exception:
+                continue
+
+    last_brace = text.rfind("}")
+    if last_brace != -1:
+        first_brace = text.find("{")
+        if first_brace != -1 and first_brace < last_brace:
+            candidate = text[first_brace : last_brace + 1]
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+    return None
+
+
+def _split_markdown_chunks(text: str, chunk_size: int = AGY_CHUNK_CHARS) -> list[str]:
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: list[str] = []
+    current_lines: list[str] = []
+    current_len = 0
+    in_code_block = False
+    fence_tag = ""
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if in_code_block:
+                in_code_block = False
+                fence_tag = ""
+            else:
+                in_code_block = True
+                fence_tag = stripped[3:].strip()
+
+        if current_len + len(line) > chunk_size and current_lines:
+            if in_code_block:
+                current_lines.append("```\n")
+            chunks.append("".join(current_lines).strip())
+            current_lines = []
+            current_len = 0
+            if in_code_block:
+                current_lines.append(f"```{fence_tag}\n")
+                current_len += len(current_lines[-1])
+
+        current_lines.append(line)
+        current_len += len(line)
+
+    if current_lines:
+        chunks.append("".join(current_lines).strip())
+    return [c for c in chunks if c]
+
 
 
 def _run_oci_ip(args: list[str], timeout: int = 180) -> tuple[int, str]:
@@ -532,6 +771,8 @@ class QQBotApp:
         self.access_token: str = ""
         self.token_expires_at: float = 0.0
         self.rolling_ip: bool = False
+        self.agy_proc: asyncio.subprocess.Process | None = None
+        self.agy_task_info: dict[str, Any] | None = None
         self.current_ws: Any = None
         self.state: dict[str, Any] = self.load_state()
         if not self.owner_openid and self.state.get("owner_openid"):
@@ -684,53 +925,174 @@ class QQBotApp:
                         time.sleep(2.0)
         return False
 
+    def send_file_media(
+        self,
+        target: dict[str, Any],
+        file_path: str,
+        file_type: int = 1,  # 1: 图片, 4: 文件
+    ) -> bool:
+        """
+        向 QQ 官方富媒体接口上传并发送本地图片或文件（使用官方标准的 JSON Base64 方式）
+        """
+        import base64
+
+        t_type = target.get("type")
+        t_id = target.get("id")
+        if not t_type or not t_id or not os.path.exists(file_path):
+            return False
+
+        if t_type == "c2c":
+            upload_url = f"{QQ_API_BASE}/v2/users/{t_id}/files"
+            msg_url = f"{QQ_API_BASE}/v2/users/{t_id}/messages"
+        elif t_type == "group":
+            upload_url = f"{QQ_API_BASE}/v2/groups/{t_id}/files"
+            msg_url = f"{QQ_API_BASE}/v2/groups/{t_id}/messages"
+        else:
+            return False
+
+        try:
+            with open(file_path, "rb") as f:
+                b64_data = base64.b64encode(f.read()).decode("utf-8")
+
+            upload_payload = {
+                "file_type": file_type,
+                "file_data": b64_data,
+                "srv_send_msg": False,
+            }
+            upload_res = requests.post(
+                upload_url,
+                headers=self.api_headers(),
+                json=upload_payload,
+                timeout=40,
+            )
+            if upload_res.status_code not in (200, 201):
+                log(f"富媒体文件上传失败 ({upload_res.status_code}): {upload_res.text}")
+                return False
+
+            file_info = upload_res.json().get("file_info")
+            if not file_info:
+                return False
+
+            seq = int(self.state.get("msg_seq", 1)) + 1
+            self.state["msg_seq"] = seq
+            body = {
+                "msg_type": 7,  # 富媒体
+                "media": {"file_info": file_info},
+                "msg_seq": seq,
+            }
+            res = requests.post(msg_url, headers=self.api_headers(), json=body, timeout=10)
+            return res.status_code in (200, 201, 202)
+        except Exception as e:
+            log(f"发送富媒体异常: {e}")
+            return False
+
     async def handle_user_command(
         self,
         target: dict[str, Any],
         sender_id: str,
         raw_content: str,
         msg_id: str,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> None:
         loop = asyncio.get_running_loop()
 
-        # 权限校验：仅允许绑定的主人 OpenID 调用
+        # 权限校验：仅允许白名单 OpenID 调用
         if not self.owner_openid and sender_id:
             self.owner_openid = sender_id
             self.state["owner_openid"] = sender_id
             self.save_state()
 
         if self.owner_openid and sender_id != self.owner_openid:
-            log(f"拒绝非授权用户 [{sender_id}] 调用: {raw_content}")
-            await loop.run_in_executor(
-                None,
-                self.send_message,
-                target,
-                "### 权限不足\n- 此机器人为私人专属，仅限主人调用。",
-                msg_id,
-            )
+            log(f"拒绝未授权用户 [{sender_id}] 调用: {raw_content}")
             return
 
+        # 附件自动下载
+        saved_files: list[str] = []
+        if attachments:
+            os.makedirs(QQ_ATTACHMENTS_DIR, exist_ok=True)
+            for att in attachments:
+                url = att.get("url")
+                if not url:
+                    continue
+                filename = att.get("filename") or os.path.basename(url.split("?")[0]) or f"file_{int(time.time())}"
+                save_path = os.path.join(QQ_ATTACHMENTS_DIR, filename)
+                try:
+                    def _download():
+                        r = requests.get(url, timeout=30)
+                        r.raise_for_status()
+                        with open(save_path, "wb") as f:
+                            f.write(r.content)
+                        return save_path
+
+                    fpath = await loop.run_in_executor(None, _download)
+                    saved_files.append(fpath)
+                    log(f"成功保存 QQ 附件: {fpath}")
+                except Exception as e:
+                    log(f"下载 QQ 附件失败 ({url}): {e}")
+
         text = raw_content.strip()
-        if ">" in text:
+        # 频道 @ 消息会带 <@!botid> 前缀；仅剥离开头的 mention，避免误伤正文中的 ">"
+        if text.startswith("<@"):
             text = text.split(">", 1)[-1].strip()
-        text = text.lstrip("/").strip()
-        parts = text.split()
-        if len(parts) >= 2 and parts[0].lower() == "oci":
-            cmd = f"oci_{parts[1].lower().replace('-', '_')}"
-            cmd_args = parts[2:]
-        elif parts:
-            cmd = parts[0].lower().replace("-", "_")
-            cmd_args = parts[1:]
+        has_slash = text.startswith("/")
+        unprefixed = text.lstrip("/").strip()
+        parts = unprefixed.split()
+        first_word = parts[0].lower() if parts else ""
+
+        # 仅当显式以 "/" 开头，或首词明确是已知运维命令时才解析为内部控制指令
+        is_known_cmd = (
+            first_word in KNOWN_COMMANDS
+            or first_word.startswith("oci_")
+            or (len(parts) >= 2 and parts[0].lower() == "oci")
+        )
+
+        if has_slash or is_known_cmd:
+            if len(parts) >= 2 and parts[0].lower() == "oci":
+                cmd = f"oci_{parts[1].lower().replace('-', '_')}"
+                cmd_args = parts[2:]
+                cmd_rest = unprefixed.split(maxsplit=2)[-1] if len(parts) > 2 else ""
+            elif parts:
+                cmd = parts[0].lower().replace("-", "_")
+                cmd_args = parts[1:]
+                cmd_rest = unprefixed[len(parts[0]) :].strip()
+            else:
+                cmd = ""
+                cmd_args = []
+                cmd_rest = ""
         else:
-            cmd = ""
-            cmd_args = []
+            # 普通消息（包括包含 URL、普通提问等）：不拆分首词，全量透传给 agy
+            cmd = "agy"
+            cmd_args = parts
+            cmd_rest = unprefixed
 
         is_first_bind = "target" not in self.state
         self.state["target"] = target
         self.state["last_msg_id"] = msg_id
         self.save_state()
 
-        log(f"收到指令 [{target.get('type')}:{target.get('id')}]: /{cmd} {cmd_args}")
+        log(f"收到指令 [{target.get('type')}:{target.get('id')}]: /{cmd} {cmd_args} (附件: {len(saved_files)} 个)")
+
+        # 如果有附件，将本地文件路径拼接到 prompt 中传给 agy
+        if saved_files:
+            file_hints = []
+            for sf in saved_files:
+                ext = os.path.splitext(sf)[1].lower()
+                if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                    file_hints.append(f"[用户发送的图片已保存在服务器: {sf}，请结合图片进行分析]")
+                else:
+                    file_hints.append(f"[用户发送的文件已保存在服务器: {sf}，请直接读取或处理该文件]")
+            combined_hint = "\n".join(file_hints)
+            cmd_rest = f"{combined_hint}\n{cmd_rest}".strip()
+            if not cmd or (not cmd.startswith("oci_") and cmd not in KNOWN_COMMANDS):
+                cmd = "agy"
+
+        # 兜底：未匹配到其它指令的普通内容全量转入 agy
+        if cmd not in KNOWN_COMMANDS and not cmd.startswith("oci_") and (cmd_rest or saved_files):
+            cmd = "agy"
+
+        if cmd.startswith("agy"):
+            await self.handle_agy_command(target, msg_id, cmd, cmd_args, cmd_rest)
+            return
 
         if cmd == "oci_roll":
             if self.rolling_ip:
@@ -847,7 +1209,17 @@ class QQBotApp:
                     "- `/oci_bind` : 将候选预留 IP 换绑至服务器并释放旧 IP\n"
                     "- `/oci_clean` : 释放未绑定预留 IP\n"
                     "- `/oci_link` : 获取 sing-box 节点链接\n"
-                    "- `/oci_status` : 查看服务器实时负载与流量指标"
+                    "- `/oci_status` : 查看服务器实时负载与流量指标\n"
+                    "\n"
+                    "### AGY 远程 Agent\n"
+                    "- `/agy <任务>` : 在当前目录续聊 (直接发不带 / 的消息也行)\n"
+                    "- `/agy_new <任务>` : 开新会话\n"
+                    "- `/agy_cd [目录]` : 查看/切换工作目录\n"
+                    "- `/agy_model [模型]` : 查看/切换模型\n"
+                    "- `/agy_effort [档位]` : 查看/切换推理强度\n"
+                    "- `/agy_status` : 当前配置与任务状态\n"
+                    "- `/agy_stop` : 终止正在运行的任务\n"
+                    "- `/agy_reset` : 清空当前目录的会话记忆"
                 )
         except Exception as e:
             reply = f"### 执行出错\n- `{e}`"
@@ -855,6 +1227,390 @@ class QQBotApp:
         await loop.run_in_executor(
             None, self.send_message, target, reply, msg_id
         )
+
+    # ------------------------------------------------------------------
+    # AGY 远程 Agent
+    # ------------------------------------------------------------------
+
+    def agy_cwd(self) -> str:
+        cwd = str(self.state.get("agy_cwd") or DEFAULT_AGY_CWD)
+        if not os.path.isdir(cwd):
+            cwd = os.path.expanduser("~")
+        return cwd
+
+    def agy_model(self) -> str:
+        return str(self.state.get("agy_model") or DEFAULT_AGY_MODEL)
+
+    def agy_effort(self) -> str:
+        return str(self.state.get("agy_effort") or DEFAULT_AGY_EFFORT)
+
+    def agy_sessions(self) -> dict[str, str]:
+        return self.state.setdefault("agy_sessions", {})
+
+    def build_agy_status(self) -> str:
+        cwd = self.agy_cwd()
+        conv = self.agy_sessions().get(cwd)
+        lines = [
+            "### AGY 状态",
+            f"- **工作目录**: `{_short_path(cwd)}`",
+            f"- **模型**: `{self.agy_model()}`",
+            f"- **推理强度**: `{self.agy_effort()}`",
+            f"- **当前目录会话**: `{conv[:8] if conv else '无 (下次自动新建)'}`",
+        ]
+        info = self.agy_task_info
+        if self.agy_proc is not None and info:
+            elapsed = int(time.time() - info["started"])
+            lines.append(
+                f"- **运行中**: `{info['prompt'][:40]}` (已 `{elapsed}s`，`/agy_stop` 可终止)"
+            )
+        else:
+            lines.append("- **运行中**: 无")
+        return "\n".join(lines)
+
+    def build_agy_model_list(self) -> str:
+        current_model = self.agy_model()
+        current_effort = self.agy_effort()
+
+        families: list[dict[str, Any]] = [
+            {
+                "name": "Gemini 4 Argon",
+                "alias": "argon",
+                "tiers": ["low", "medium", "high"],
+                "prefix": "gemini-4-argon",
+            },
+            {
+                "name": "Gemini 3.8 Flash",
+                "alias": "flash",
+                "tiers": ["low", "medium", "high"],
+                "prefix": "gemini-3.8-flash",
+            },
+            {
+                "name": "Claude Opus 5.5",
+                "alias": "opus",
+                "tiers": ["low", "medium", "high"],
+                "prefix": "claude-opus-5-5",
+            },
+            {
+                "name": "Claude Sonnet 5.5",
+                "alias": "sonnet",
+                "tiers": ["low", "medium", "high"],
+                "prefix": "claude-sonnet-5-5",
+            },
+            {
+                "name": "GPT-OSS 120B",
+                "alias": "gpt",
+                "tiers": ["medium"],
+                "prefix": "gpt-oss-120b",
+            },
+        ]
+
+        lines = ["### 🤖 可用模型系列"]
+        for f in families:
+            prefix = f["prefix"]
+            is_cur = current_model.startswith(prefix)
+            mark = f" ✅ `[{current_effort}]`" if is_cur else ""
+            tiers_str = " · ".join(f"`{t}`" for t in f["tiers"])
+            lines.append(f"- **{f['name']}** (`{f['alias']}`){mark}\n  - 档位: {tiers_str}")
+
+        lines.extend(
+            [
+                "",
+                f"> 当前: `{current_model}` (`{current_effort}`)",
+                "> 切换示例: `/agy_model flash` 或 `/agy_effort high`",
+            ]
+        )
+        return "\n".join(lines)
+
+    async def send_async(
+        self, target: dict[str, Any], content: str, msg_id: str | None
+    ) -> bool:
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(None, self.send_message, target, content, msg_id)
+        if not ok and RAW_URL_RE.search(content):
+            ok = await loop.run_in_executor(
+                None, self.send_message, target, _neutralize_urls(content), msg_id
+            )
+        return ok
+
+    async def handle_agy_command(
+        self,
+        target: dict[str, Any],
+        msg_id: str,
+        cmd: str,
+        cmd_args: list[str],
+        cmd_rest: str,
+    ) -> None:
+        if cmd == "agy_status":
+            await self.send_async(target, self.build_agy_status(), msg_id)
+            return
+
+        if cmd == "agy_stop":
+            proc = self.agy_proc
+            if proc is None or proc.returncode is not None:
+                await self.send_async(target, "### AGY\n- 当前没有正在运行的任务。", msg_id)
+                return
+            if self.agy_task_info is not None:
+                self.agy_task_info["stopped"] = True
+            try:
+                os.killpg(proc.pid, 15)
+            except ProcessLookupError:
+                pass
+            await self.send_async(target, "### AGY\n- 已发送终止信号。", msg_id)
+            return
+
+        if cmd == "agy_reset":
+            cwd = self.agy_cwd()
+            self.agy_sessions().pop(cwd, None)
+            self.save_state()
+            await self.send_async(
+                target, f"### AGY\n- 已清空 `{_short_path(cwd)}` 的会话记忆。", msg_id
+            )
+            return
+
+        if cmd == "agy_cd":
+            if not cmd_rest:
+                await self.send_async(
+                    target, f"### AGY 工作目录\n- 当前: `{_short_path(self.agy_cwd())}`", msg_id
+                )
+                return
+            new_dir = os.path.abspath(
+                os.path.expanduser(cmd_rest)
+                if cmd_rest.startswith(("~", "/"))
+                else os.path.join(self.agy_cwd(), cmd_rest)
+            )
+            if not os.path.isdir(new_dir):
+                await self.send_async(
+                    target,
+                    f"### 切换失败\n- 目录不存在: `{_short_path(new_dir)}`\n"
+                    "- 可以先让 agy 创建，例如 `/agy 在 ~/code 下新建 demo 目录`",
+                    msg_id,
+                )
+                return
+            self.state["agy_cwd"] = new_dir
+            self.save_state()
+            has_conv = new_dir in self.agy_sessions()
+            await self.send_async(
+                target,
+                f"### AGY 工作目录\n- 已切换到 `{_short_path(new_dir)}`\n"
+                f"- {'将续接该目录之前的会话' if has_conv else '该目录暂无会话，下次将新建'}",
+                msg_id,
+            )
+            return
+
+        if cmd in ("agy_model", "agy_models"):
+            if not cmd_args:
+                await self.send_async(target, self.build_agy_model_list(), msg_id)
+                return
+            model_id, inferred_effort = resolve_agy_model(cmd_args[0], self.agy_effort())
+            known = {m[0] for m in AGY_MODEL_CATALOG}
+            self.state["agy_model"] = model_id
+            if inferred_effort:
+                self.state["agy_effort"] = inferred_effort
+            self.save_state()
+            warn = "" if model_id in known else "\n- ⚠️ 不在内置列表中，将原样传给 agy"
+            await self.send_async(
+                target,
+                f"### AGY 模型\n- 模型: `{model_id}`\n- 推理强度: `{self.agy_effort()}`{warn}",
+                msg_id,
+            )
+            return
+
+        if cmd == "agy_effort":
+            if not cmd_args:
+                await self.send_async(
+                    target,
+                    f"### AGY 推理强度\n- 当前: `{self.agy_effort()}`\n"
+                    f"- 可选: `{' / '.join(AGY_EFFORT_LEVELS)}`",
+                    msg_id,
+                )
+                return
+            level = cmd_args[0].lower()
+            if level not in AGY_EFFORT_LEVELS:
+                await self.send_async(
+                    target,
+                    f"### 无效档位\n- 可选: `{' / '.join(AGY_EFFORT_LEVELS)}`",
+                    msg_id,
+                )
+                return
+            self.state["agy_effort"] = level
+            self.state["agy_model"] = sync_model_with_effort(self.agy_model(), level)
+            self.save_state()
+            await self.send_async(
+                target,
+                f"### AGY 推理强度\n- 推理强度: `{level}`\n- 模型: `{self.agy_model()}`",
+                msg_id,
+            )
+            return
+
+        if cmd in ("agy", "agy_new"):
+            prompt = cmd_rest
+            if not prompt:
+                await self.send_async(
+                    target,
+                    "### AGY\n"
+                    "- 用法: `/agy <任何想说或想做的事>` (或直接发普通消息)\n"
+                    "- 开新会话: `/agy_new <内容>`\n\n"
+                    + self.build_agy_status(),
+                    msg_id,
+                )
+                return
+
+            if self.agy_proc is not None:
+                await self.send_async(
+                    target,
+                    "### 任务进行中\n- 上一个 agy 任务还没跑完，可发 `/agy_status` 查看或 `/agy_stop` 终止。",
+                    msg_id,
+                )
+                return
+
+            await self.run_agy_task(
+                target,
+                msg_id,
+                prompt,
+                new_session=(cmd == "agy_new"),
+            )
+            return
+
+        await self.send_async(target, f"### AGY\n- 未知指令 `/{cmd}`，发 `/help` 查看帮助。", msg_id)
+
+    async def run_agy_task(
+        self,
+        target: dict[str, Any],
+        msg_id: str,
+        prompt: str,
+        new_session: bool,
+    ) -> None:
+        cwd = self.agy_cwd()
+        model = self.agy_model()
+        effort = self.agy_effort()
+        sessions = self.agy_sessions()
+        if new_session:
+            sessions.pop(cwd, None)
+            self.save_state()
+        conv_id = sessions.get(cwd)
+
+        # 随心所欲：不做人设干涉，直接原汁原味透传 prompt
+        cmd = [
+            "agy",
+            "-p",
+            prompt,
+            "--output-format",
+            "json",
+            "--model",
+            model,
+            "--effort",
+            effort,
+            "--dangerously-skip-permissions",
+        ]
+        if conv_id:
+            cmd.extend(["--conversation", conv_id])
+
+        started = time.time()
+        self.agy_task_info = {"prompt": prompt, "started": started, "stopped": False}
+        stdout_b = b""
+        stderr_b = b""
+        timed_out = False
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=cwd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+            self.agy_proc = proc
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=AGY_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                timed_out = True
+                try:
+                    os.killpg(proc.pid, 9)
+                except ProcessLookupError:
+                    pass
+                stdout_b, stderr_b = await proc.communicate()
+        except Exception as e:
+            self.agy_proc = None
+            self.agy_task_info = None
+            await self.send_async(target, f"### AGY 启动失败\n- `{e}`", msg_id)
+            return
+
+        stopped = bool(self.agy_task_info and self.agy_task_info.get("stopped"))
+        self.agy_proc = None
+        self.agy_task_info = None
+        elapsed = time.time() - started
+
+        if timed_out or stopped:
+            reason = "超时被终止" if timed_out else "已被手动终止"
+            await self.send_async(
+                target,
+                f"### AGY 任务{reason}\n- 耗时 `{elapsed:.0f}s`\n- 已做的文件修改不会回滚，可用 `/agy` 让它检查现状。",
+                msg_id,
+            )
+            return
+
+        result = _parse_agy_json(stdout_b.decode("utf-8", "replace"))
+        if result is None:
+            err = _strip_ansi(
+                (stderr_b.decode("utf-8", "replace") or stdout_b.decode("utf-8", "replace"))
+            ).strip()
+            if conv_id:
+                # 会话可能已失效，清掉以便下次自动新建
+                sessions.pop(cwd, None)
+                self.save_state()
+            await self.send_async(
+                target,
+                f"### AGY 执行失败\n```text\n{err[-1500:] or '无输出'}\n```"
+                + ("\n> 已清除当前目录会话，下次将自动新建" if conv_id else ""),
+                msg_id,
+            )
+            return
+
+        new_conv = result.get("conversation_id")
+        if new_conv:
+            sessions[cwd] = new_conv
+            self.save_state()
+
+        response = _sanitize_agy_markdown(str(result.get("response") or ""))
+        usage = result.get("usage") or {}
+        total_tokens = int(usage.get("total_tokens") or 0)
+        footer = (
+            f"> `{model}` · `{effort}` · `{elapsed:.1f}s`"
+            f" · `{total_tokens / 1000:.1f}k tok` · 会话 `{(new_conv or '')[:8]}`"
+        )
+        if not response:
+            status = result.get("status", "")
+            if status and status != "SUCCESS":
+                response = f"*(执行状态: {status}，无文本输出)*"
+            else:
+                response = "(无文本回复)"
+
+        chunks = _split_markdown_chunks(response, AGY_CHUNK_CHARS)
+        truncated = len(chunks) > AGY_MAX_CHUNKS
+        chunks = chunks[:AGY_MAX_CHUNKS]
+        total = len(chunks)
+        for i, chunk in enumerate(chunks, 1):
+            header = "### 🤖 AGY" if i == 1 else f"### 🤖 AGY (续 {i}/{total})"
+            body = f"{header}\n{chunk}"
+            if i == total:
+                if truncated:
+                    body += "\n\n> 回复过长已截断，可让它“总结一下刚才的结果”"
+                body += "\n\n" + footer
+            await self.send_async(target, body, msg_id)
+
+        # 检查是否生成了本地图片并自动作为富媒体回传给 QQ
+        try:
+            img_paths = re.findall(r"(/[\w./-]+\.(?:png|jpg|jpeg|webp|gif))", response)
+            sent_imgs = set()
+            for ipath in img_paths:
+                if os.path.exists(ipath) and ipath not in sent_imgs:
+                    sent_imgs.add(ipath)
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, self.send_file_media, target, ipath, 1)
+        except Exception as e:
+            log(f"回传生成图片异常: {e}")
 
     async def scheduler_loop(self) -> None:
         """后台定时任务：每天指定时间推送账单日报，且每小时巡检一次异常新增扣费。"""
@@ -990,6 +1746,7 @@ class QQBotApp:
                                     author = d.get("author") or {}
                                     openid = author.get("user_openid") or author.get("id") or ""
                                     content = d.get("content", "")
+                                    attachments = d.get("attachments") or []
                                     msg_id = d.get("id", "")
                                     if openid:
                                         asyncio.create_task(
@@ -998,6 +1755,7 @@ class QQBotApp:
                                                 openid,
                                                 content,
                                                 msg_id,
+                                                attachments,
                                             )
                                         )
                                 elif event_type == "GROUP_AT_MESSAGE_CREATE":
@@ -1012,6 +1770,7 @@ class QQBotApp:
                                         "group_id"
                                     )
                                     content = d.get("content", "")
+                                    attachments = d.get("attachments") or []
                                     msg_id = d.get("id", "")
                                     if group_openid:
                                         asyncio.create_task(
@@ -1020,6 +1779,7 @@ class QQBotApp:
                                                 sender_id,
                                                 content,
                                                 msg_id,
+                                                attachments,
                                             )
                                         )
                                 elif event_type == "AT_MESSAGE_CREATE":
@@ -1027,6 +1787,7 @@ class QQBotApp:
                                     sender_id = author.get("id") or ""
                                     channel_id = d.get("channel_id")
                                     content = d.get("content", "")
+                                    attachments = d.get("attachments") or []
                                     msg_id = d.get("id", "")
                                     if channel_id:
                                         asyncio.create_task(
@@ -1035,6 +1796,7 @@ class QQBotApp:
                                                 sender_id,
                                                 content,
                                                 msg_id,
+                                                attachments,
                                             )
                                         )
                                 elif event_type == "DIRECT_MESSAGE_CREATE":
@@ -1042,6 +1804,7 @@ class QQBotApp:
                                     sender_id = author.get("id") or ""
                                     guild_id = d.get("guild_id")
                                     content = d.get("content", "")
+                                    attachments = d.get("attachments") or []
                                     msg_id = d.get("id", "")
                                     if guild_id:
                                         asyncio.create_task(
@@ -1050,6 +1813,7 @@ class QQBotApp:
                                                 sender_id,
                                                 content,
                                                 msg_id,
+                                                attachments,
                                             )
                                         )
                     finally:
