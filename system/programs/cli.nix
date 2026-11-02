@@ -1,4 +1,8 @@
-{ pkgs, config, ... }:
+{
+  pkgs,
+  inputs,
+  ...
+}:
 {
   environment.systemPackages =
     (with pkgs; [
@@ -6,7 +10,7 @@
       gcc
       clang
       gdb
-      neovim
+      inputs.nvim-flake.packages.${pkgs.stdenv.hostPlatform.system}.nvim
       wget
       fastfetch
       eza
