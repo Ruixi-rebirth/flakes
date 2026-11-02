@@ -20,6 +20,7 @@
         email = me.email;
       };
       safe.directory = [ "*" ];
+      credential.helper = "store";
     };
   };
 
