@@ -4,6 +4,7 @@
   - `minimal`: **Highly recommended for initial installation.** It contains only the base system, making the process fast and stable. If you are installing NixOS (not WSL), please choose this first.
   - `yu`: Based on **WSL** (Windows Subsystem for Linux).
   - `k-on`: A regular **NixOS** full configuration (includes desktop environment, etc.).
+  - `oci`: Tailored for **Oracle Cloud (OCI) Always-Free ARM** (`aarch64-linux`), infected from Ubuntu 24.04 Minimal via `nixos-anywhere`.
 - **Hardware Requirements**:
   - Recommended RAM: **> 8GB**.
   - **Reason**: In the NixOS Live environment, operations occur in RAM and Nix downloads many dependencies. Insufficient memory often leads to "No space left on device" errors.
@@ -51,4 +52,14 @@ step5
 
 ```console
 just install
+```
+
+---
+
+#### ☁️ Remote Deployment (e.g. OCI)
+
+For remote cloud VPS with existing Linux (e.g. Ubuntu 24.04 Minimal), deploy directly using `nixos-anywhere`:
+
+```console
+just anywhere oci root@<ip>
 ```
