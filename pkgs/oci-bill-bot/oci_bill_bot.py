@@ -1610,17 +1610,18 @@ class QQBotApp:
             if i < total:
                 await asyncio.sleep(0.6)
 
-        # 检查是否生成了本地图片并自动作为富媒体回传给 QQ
+        # 检查是否生成了本地图片/视频并自动作为富媒体回传给 QQ
         try:
-            img_paths = re.findall(r"(/[\w./-]+\.(?:png|jpg|jpeg|webp|gif))", response)
-            sent_imgs = set()
-            for ipath in img_paths:
-                if os.path.exists(ipath) and ipath not in sent_imgs:
-                    sent_imgs.add(ipath)
+            media_paths = re.findall(r"(/[\w./-]+\.(?:png|jpg|jpeg|webp|gif|mp4))", response)
+            sent_media = set()
+            for mpath in media_paths:
+                if os.path.exists(mpath) and mpath not in sent_media:
+                    sent_media.add(mpath)
+                    ftype = 2 if mpath.endswith(".mp4") else 1
                     loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self.send_file_media, target, ipath, 1)
+                    await loop.run_in_executor(None, self.send_file_media, target, mpath, ftype)
         except Exception as e:
-            log(f"回传生成图片异常: {e}")
+            log(f"回传生成富媒体异常: {e}")
 
     async def scheduler_loop(self) -> None:
         """后台定时任务：每天指定时间推送账单日报，且每小时巡检一次异常新增扣费。"""
