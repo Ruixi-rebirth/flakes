@@ -1,6 +1,9 @@
 { pkgs, ... }:
 {
-  imports = [ ./hardware-configuration.nix ];
+  imports = [
+    ./hardware-configuration.nix
+    ../../lib/disko_layout/single-device-luks.nix
+  ];
 
   networking.hostName = "minimal";
 

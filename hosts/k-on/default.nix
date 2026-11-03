@@ -17,6 +17,7 @@ in
 {
   imports = [
     ./hardware-configuration.nix
+    ../../lib/disko_layout/single-device-luks.nix
   ];
 
   networking.hostName = "k-on";

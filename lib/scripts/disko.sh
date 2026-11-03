@@ -147,16 +147,6 @@ info "Generating hardware-configuration.nix for $selected_host..."
 nixos-generate-config --no-filesystems --root /mnt --dir "$host_dir"
 # The above command generates hardware-configuration.nix inside "$host_dir"
 
-# Patch hardware-configuration.nix to import the layout
-layout_filename="$(basename "$partition_layout")"
-relative_path="../../lib/disko_layout"
-layout_import_path="$relative_path/$layout_filename"
-
-# WARNING: Direct 'sed' modification of Nix files can be brittle.
-# Consider more robust Nix mechanisms or dynamically importing the disko layout.
-info "Patching hardware-configuration.nix with disko layout..."
-sed -i "/imports\ =/cimports\ = [\ $layout_import_path\ ]++" "$host_dir/hardware-configuration.nix"
-
 # 8. Copy Flake to Target
 info "Copying flake to /mnt/etc/nixos/flakes using rsync..."
 rsync -av --exclude='.git*' --exclude='result' --exclude='log' --exclude='.direnv*' --exclude='tmp*' --exclude='.*.swp' --exclude='.*.swo' "$FLAKE_ROOT/" /mnt/etc/nixos/flakes/

@@ -11,9 +11,6 @@
 
 {
   imports = [
-    ../../lib/disko_layout/single-device-luks.nix
-  ]
-  ++ [
     (modulesPath + "/installer/scan/not-detected.nix")
   ];
 
