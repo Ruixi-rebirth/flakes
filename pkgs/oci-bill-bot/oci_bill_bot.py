@@ -478,13 +478,7 @@ def _split_markdown_chunks(text: str, chunk_size: int = AGY_CHUNK_CHARS) -> list
 
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
-        if stripped.startswith("```"):
-            if in_code_block:
-                in_code_block = False
-                fence_tag = ""
-            else:
-                in_code_block = True
-                fence_tag = stripped[3:].strip()
+        is_fence = stripped.startswith("```")
 
         if current_len + len(line) > chunk_size and current_lines:
             if in_code_block:
@@ -496,10 +490,20 @@ def _split_markdown_chunks(text: str, chunk_size: int = AGY_CHUNK_CHARS) -> list
                 current_lines.append(f"```{fence_tag}\n")
                 current_len += len(current_lines[-1])
 
+        if is_fence:
+            if in_code_block:
+                in_code_block = False
+                fence_tag = ""
+            else:
+                in_code_block = True
+                fence_tag = stripped[3:].strip()
+
         current_lines.append(line)
         current_len += len(line)
 
     if current_lines:
+        if in_code_block:
+            current_lines.append("\n```\n")
         chunks.append("".join(current_lines).strip())
     return [c for c in chunks if c]
 
@@ -1592,13 +1596,19 @@ class QQBotApp:
         chunks = chunks[:AGY_MAX_CHUNKS]
         total = len(chunks)
         for i, chunk in enumerate(chunks, 1):
-            header = "### 🤖 AGY" if i == 1 else f"### 🤖 AGY (续 {i}/{total})"
+            header = "### 🤖 AGY" if total == 1 else f"### 🤖 AGY ({i}/{total})"
             body = f"{header}\n{chunk}"
             if i == total:
                 if truncated:
                     body += "\n\n> 回复过长已截断，可让它“总结一下刚才的结果”"
                 body += "\n\n" + footer
-            await self.send_async(target, body, msg_id)
+            ok = await self.send_async(target, body, msg_id)
+            if not ok:
+                log(f"AGY 分片 [{i}/{total}] 发送失败 (可能触发接口频控或拦截)")
+            else:
+                log(f"AGY 分片 [{i}/{total}] 发送成功")
+            if i < total:
+                await asyncio.sleep(0.6)
 
         # 检查是否生成了本地图片并自动作为富媒体回传给 QQ
         try:
