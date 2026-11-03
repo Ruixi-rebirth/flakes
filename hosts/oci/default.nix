@@ -88,6 +88,9 @@
     memoryPercent = 50;
   };
 
+  # Prevent kernel lockup and SSH freeze under severe memory pressure
+  services.earlyoom.enable = true;
+
   environment.systemPackages = with pkgs; [
     antigravity-cli
     oci-ip
