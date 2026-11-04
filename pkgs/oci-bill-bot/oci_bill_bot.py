@@ -1243,7 +1243,7 @@ class QQBotApp:
         radius: 6pt,
         inset: (x: 8pt, y: 4pt)
       )[
-        #text(size: 11pt, weight: "bold", fill: rgb("#0969da"))[🤖 Antigravity Reply]
+        #text(size: 11pt, weight: "bold", fill: rgb("#0969da"))[Antigravity Reply]
       ]
     ],
     [
@@ -1745,7 +1745,6 @@ class QQBotApp:
                 )
                 return
 
-            await self.send_async(target, "🎨 正在排版渲染为长图卡片，请稍候...", msg_id)
             loop = asyncio.get_running_loop()
             img_path = await loop.run_in_executor(
                 None, self.render_markdown_card_image, content_to_render
