@@ -405,6 +405,8 @@ AGY_TIMEOUT_SECONDS = 600
 AGY_CHUNK_CHARS = 1200
 AGY_MAX_CHUNKS = 4
 
+TYPST_BIN = "typst"
+
 KNOWN_COMMANDS = {
     "help",
     "oci_bill",
@@ -424,7 +426,128 @@ KNOWN_COMMANDS = {
     "agy_status",
     "agy_stop",
     "agy_reset",
+    "agy_queue",
+    "agy_q",
+    "agy_clear",
+    "agy_clean",
+    "render",
+    "render_last",
+    "r",
 }
+
+
+def get_typst_cmd() -> str:
+    if os.path.isabs(TYPST_BIN) and os.path.exists(TYPST_BIN):
+        return TYPST_BIN
+    found = shutil.which(TYPST_BIN)
+    if found:
+        return found
+    try:
+        for entry in os.scandir("/nix/store"):
+            if "-typst-" in entry.name or entry.name.startswith("typst-"):
+                p = os.path.join(entry.path, "bin", "typst")
+                if os.path.exists(p) and os.access(p, os.X_OK):
+                    return p
+    except Exception:
+        pass
+    return "typst"
+
+
+def find_typst_font_paths() -> list[str]:
+    candidates = [
+        "/run/current-system/sw/share/fonts",
+        "/run/current-system/sw/share/X11/fonts",
+        "/var/run/current-system/sw/share/fonts",
+    ]
+    found = [p for p in candidates if os.path.isdir(p)]
+    try:
+        for entry in os.scandir("/nix/store"):
+            if "source-han-sans" in entry.name:
+                for sub in ("truetype", "opentype"):
+                    p = os.path.join(entry.path, "share", "fonts", sub)
+                    if os.path.isdir(p) and p not in found:
+                        found.append(p)
+    except Exception:
+        pass
+    return found
+
+
+def md_to_typst(md: str) -> str:
+    """
+    将 Markdown 文本转换为 Typst 语法，保留标题、粗体、列表、代码块，并处理 Typst 特殊字符转义。
+    """
+    lines = md.splitlines()
+    out: list[str] = []
+    in_code_block = False
+    in_quote = False
+    quote_lines: list[str] = []
+
+    def flush_quote() -> None:
+        nonlocal in_quote, quote_lines
+        if quote_lines:
+            content = " \n".join(quote_lines)
+            out.append(
+                f'#block(stroke: (left: 3pt + rgb("#0969da")), inset: (left: 10pt, y: 5pt), '
+                f'fill: rgb("#f6f8fa"), radius: (right: 4pt))[{content}]'
+            )
+            quote_lines = []
+        in_quote = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_quote()
+            in_code_block = not in_code_block
+            out.append(line)
+            continue
+        if in_code_block:
+            out.append(line)
+            continue
+
+        if stripped.startswith(">"):
+            in_quote = True
+            q_text = stripped.lstrip(">").strip()
+            q_text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", q_text)
+            q_text = re.sub(r"(?<!\\)\$", r"\$", q_text)
+            q_text = re.sub(r"(?<!\\)@", r"\@", q_text)
+            q_text = re.sub(r"<([^>]+)>", r"[\1]", q_text)
+            quote_lines.append(q_text)
+            continue
+        elif in_quote:
+            flush_quote()
+
+        if re.match(r"^(\-{3,}|\*{3,}|_{3,})$", stripped):
+            out.append('#line(length: 100%, stroke: 0.8pt + rgb("#eaeef2"))')
+            continue
+
+        m = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if m:
+            level = len(m.group(1))
+            out.append("=" * level + " " + m.group(2))
+            continue
+
+        code_spans: list[str] = []
+
+        def save_code(match: re.Match[str]) -> str:
+            code_spans.append(match.group(0))
+            return f"\x00CODE_{len(code_spans) - 1}\x00"
+
+        l = re.sub(r"`[^`]+`", save_code, line)
+        l = re.sub(r"\*\*(.+?)\*\*", r"*\1*", l)
+        l = re.sub(r"^\s*\d+\.\s+", "+ ", l)
+        l = re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'#link("\2")[\1]', l)
+        l = re.sub(r"(?<!\\)\$", r"\$", l)
+        l = re.sub(r"(?<!\\)@", r"\@", l)
+        l = re.sub(r"(?<!\\)#", r"\#", l)
+        l = re.sub(r"<([^>]+)>", r"[\1]", l)
+
+        for i, span in enumerate(code_spans):
+            l = l.replace(f"\x00CODE_{i}\x00", span)
+
+        out.append(l)
+
+    flush_quote()
+    return "\n".join(out)
 
 
 def _parse_agy_json(raw_text: str) -> dict[str, Any] | None:
@@ -778,6 +901,10 @@ class QQBotApp:
         self.agy_proc: asyncio.subprocess.Process | None = None
         self.agy_task_info: dict[str, Any] | None = None
         self.current_ws: Any = None
+        self.agy_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.agy_busy: bool = False
+        self.last_agy_response: str = ""
+        self.last_bot_reply: str = ""
         self.state: dict[str, Any] = self.load_state()
         if not self.owner_openid and self.state.get("owner_openid"):
             self.owner_openid = str(self.state["owner_openid"])
@@ -951,6 +1078,19 @@ class QQBotApp:
         elif t_type == "group":
             upload_url = f"{QQ_API_BASE}/v2/groups/{t_id}/files"
             msg_url = f"{QQ_API_BASE}/v2/groups/{t_id}/messages"
+        elif t_type in ("channel", "dms"):
+            endpoint = "channels" if t_type == "channel" else "dms"
+            msg_url = f"{QQ_API_BASE}/{endpoint}/{t_id}/messages"
+            headers = {"Authorization": f"QQBot {self.ensure_token()}"}
+            try:
+                with open(file_path, "rb") as f:
+                    fname = os.path.basename(file_path)
+                    files = {"file_image": (fname, f, "image/png")}
+                    res = requests.post(msg_url, headers=headers, files=files, timeout=30)
+                    return res.status_code in (200, 201, 202)
+            except Exception as e:
+                log(f"{t_type} 发送富媒体异常: {e}")
+                return False
         else:
             return False
 
@@ -989,6 +1129,118 @@ class QQBotApp:
         except Exception as e:
             log(f"发送富媒体异常: {e}")
             return False
+
+    def render_markdown_card_image(self, md_text: str) -> str | None:
+        """
+        使用 Typst 将 Markdown 渲染为排版优雅的高清长图卡片。
+        返回生成的本地 PNG 文件路径。
+        """
+        if not md_text or not md_text.strip():
+            return None
+
+        typst_content = md_to_typst(md_text.strip())
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        tmp_id = f"render_{int(time.time() * 1000)}"
+        tmp_typ = f"/tmp/{tmp_id}.typ"
+        out_png = f"/tmp/{tmp_id}.png"
+
+        typst_code = f"""
+#set page(
+  width: 780pt,
+  height: auto,
+  margin: (x: 28pt, top: 24pt, bottom: 28pt),
+  fill: rgb("#f6f8fa")
+)
+
+#set text(
+  font: ("Source Han Sans SC", "Source Han Sans", "Noto Sans CJK SC", "PingFang SC"),
+  size: 13.5pt,
+  fill: rgb("#1f2328"),
+  lang: "zh"
+)
+
+#set par(justify: false, leading: 0.85em)
+
+#show heading: it => block(below: 10pt, above: 14pt)[
+  #text(weight: "bold", fill: rgb("#0969da"))[#it.body]
+]
+
+#show raw.where(block: true): it => block(
+  fill: rgb("#24292e"),
+  inset: 12pt,
+  radius: 8pt,
+  width: 100%
+)[
+  #set text(fill: rgb("#f0f6fc"), size: 11.5pt)
+  #it
+]
+
+#show raw.where(block: false): it => box(
+  fill: rgb("#eff1f3"),
+  inset: (x: 4pt, y: 2pt),
+  radius: 4pt
+)[
+  #set text(fill: rgb("#bf3989"), size: 12pt)
+  #it
+]
+
+// Card container
+#block(
+  width: 100%,
+  stroke: 1pt + rgb("#d0d7de"),
+  radius: 12pt,
+  fill: white,
+  inset: (x: 26pt, y: 22pt)
+)[
+  // Header
+  #grid(
+    columns: (1fr, auto),
+    align: (left + horizon, right + horizon),
+    [
+      #box(
+        fill: rgb("#0969da").lighten(88%),
+        radius: 6pt,
+        inset: (x: 8pt, y: 4pt)
+      )[
+        #text(size: 11pt, weight: "bold", fill: rgb("#0969da"))[🤖 Antigravity Reply]
+      ]
+    ],
+    [
+      #text(size: 10.5pt, fill: rgb("#656d76"))[{now_str}]
+    ]
+  )
+
+  #v(10pt)
+  #line(length: 100%, stroke: 0.8pt + rgb("#eaeef2"))
+  #v(12pt)
+
+  // Content
+  {typst_content}
+]
+"""
+        try:
+            with open(tmp_typ, "w", encoding="utf-8") as f:
+                f.write(typst_code)
+
+            cmd = [get_typst_cmd(), "compile"]
+            for fpath in find_typst_font_paths():
+                cmd.extend(["--font-path", fpath])
+            cmd.extend(["--ppi", "144", tmp_typ, out_png])
+
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if res.returncode != 0:
+                log(f"Typst 渲染长图失败: {res.stderr}")
+                return None
+            return out_png
+        except Exception as e:
+            log(f"渲染 Markdown 卡片图片异常: {e}")
+            return None
+        finally:
+            if os.path.exists(tmp_typ):
+                try:
+                    os.remove(tmp_typ)
+                except OSError:
+                    pass
 
     async def handle_user_command(
         self,
@@ -1094,7 +1346,7 @@ class QQBotApp:
         if cmd not in KNOWN_COMMANDS and not cmd.startswith("oci_") and (cmd_rest or saved_files):
             cmd = "agy"
 
-        if cmd.startswith("agy"):
+        if cmd.startswith("agy") or cmd in ("render", "render_last", "r"):
             await self.handle_agy_command(target, msg_id, cmd, cmd_args, cmd_rest)
             return
 
@@ -1218,6 +1470,9 @@ class QQBotApp:
                     "### AGY 远程 Agent\n"
                     "- `/agy <任务>` : 在当前目录续聊 (直接发不带 / 的消息也行)\n"
                     "- `/agy_new <任务>` : 开新会话\n"
+                    "- `/render` (`/r`) : 将上一条回复渲染为精美长图 (支持 `/render <Markdown文本>`)\n"
+                    "- `/agy_queue` : 查看任务排队情况\n"
+                    "- `/agy_clear` : 清空所有排队中的任务\n"
                     "- `/agy_cd [目录]` : 查看/切换工作目录\n"
                     "- `/agy_model [模型]` : 查看/切换模型\n"
                     "- `/agy_effort [档位]` : 查看/切换推理强度\n"
@@ -1269,6 +1524,8 @@ class QQBotApp:
             )
         else:
             lines.append("- **运行中**: 无")
+        qsize = self.agy_queue.qsize()
+        lines.append(f"- **排队任务**: `{qsize}` 个")
         return "\n".join(lines)
 
     def build_agy_model_list(self) -> str:
@@ -1328,6 +1585,7 @@ class QQBotApp:
     async def send_async(
         self, target: dict[str, Any], content: str, msg_id: str | None
     ) -> bool:
+        self.last_bot_reply = content
         loop = asyncio.get_running_loop()
         ok = await loop.run_in_executor(None, self.send_message, target, content, msg_id)
         if not ok and RAW_URL_RE.search(content):
@@ -1359,7 +1617,75 @@ class QQBotApp:
                 os.killpg(proc.pid, 15)
             except ProcessLookupError:
                 pass
-            await self.send_async(target, "### AGY\n- 已发送终止信号。", msg_id)
+            queue_hint = ""
+            if not self.agy_queue.empty():
+                queue_hint = f"\n- 队列中尚有 `{self.agy_queue.qsize()}` 个排队任务，如需一并取消可发 `/agy_clear`。"
+            await self.send_async(target, f"### AGY\n- 已发送终止信号。{queue_hint}", msg_id)
+            return
+
+        if cmd in ("agy_queue", "agy_q"):
+            lines = ["### 📋 AGY 任务队列"]
+            if self.agy_task_info:
+                prompt_preview = self.agy_task_info.get("prompt", "")[:40]
+                elapsed = int(time.time() - self.agy_task_info.get("started", time.time()))
+                lines.append(f"- **正在执行**: `{prompt_preview}` (已运行 `{elapsed}s`)")
+            else:
+                lines.append("- **正在执行**: 无")
+            qsize = self.agy_queue.qsize()
+            lines.append(f"- **等待排队**: `{qsize}` 个任务")
+            if qsize > 0:
+                lines.append("> 排队任务将在前序任务结束后按顺序自动执行。发 `/agy_clear` 可清空队列。")
+            await self.send_async(target, "\n".join(lines), msg_id)
+            return
+
+        if cmd in ("agy_clear", "agy_clean"):
+            cleared_count = 0
+            while not self.agy_queue.empty():
+                try:
+                    self.agy_queue.get_nowait()
+                    self.agy_queue.task_done()
+                    cleared_count += 1
+                except (asyncio.QueueEmpty, ValueError):
+                    break
+            await self.send_async(
+                target,
+                f"### 🧹 AGY 队列已清空\n- 已取消 `{cleared_count}` 个正在排队的待处理任务。",
+                msg_id,
+            )
+            return
+
+        if cmd in ("render", "render_last", "r"):
+            content_to_render = cmd_rest.strip() if cmd_rest else (self.last_agy_response or self.last_bot_reply)
+            if not content_to_render:
+                await self.send_async(
+                    target,
+                    "### 渲染失败\n- 暂无可渲染的历史回复。\n- 用法: `/render` 渲染上一条回复，或 `/render <Markdown文本>` 渲染指定文本。",
+                    msg_id,
+                )
+                return
+
+            await self.send_async(target, "🎨 正在排版渲染为长图卡片，请稍候...", msg_id)
+            loop = asyncio.get_running_loop()
+            img_path = await loop.run_in_executor(
+                None, self.render_markdown_card_image, content_to_render
+            )
+            if not img_path or not os.path.exists(img_path):
+                await self.send_async(
+                    target,
+                    "### 渲染图片失败\n- Typst 编译异常，已保留文字输出。",
+                    msg_id,
+                )
+                return
+
+            ok = await loop.run_in_executor(
+                None, self.send_file_media, target, img_path, 1
+            )
+            if not ok:
+                await self.send_async(
+                    target,
+                    f"### 图片回传失败\n- 已生成图片但上传 QQ 接口未响应: `{img_path}`",
+                    msg_id,
+                )
             return
 
         if cmd == "agy_reset":
@@ -1459,20 +1785,32 @@ class QQBotApp:
                 )
                 return
 
-            if self.agy_proc is not None:
+            is_busy = self.agy_busy or (self.agy_proc is not None)
+            qsize = self.agy_queue.qsize()
+            pos = qsize + 1 if is_busy else 1
+
+            await self.agy_queue.put(
+                {
+                    "target": target,
+                    "msg_id": msg_id,
+                    "prompt": prompt,
+                    "new_session": (cmd == "agy_new"),
+                    "queued_at": time.time(),
+                }
+            )
+
+            if is_busy:
+                prompt_snippet = prompt.replace("\n", " ")[:30] + (
+                    "..." if len(prompt) > 30 else ""
+                )
                 await self.send_async(
                     target,
-                    "### 任务进行中\n- 上一个 agy 任务还没跑完，可发 `/agy_status` 查看或 `/agy_stop` 终止。",
+                    f"### 📥 任务已排队 (第 {pos} 位)\n"
+                    f"- 待执行: `{prompt_snippet}`\n"
+                    "- 当前任务执行完毕后将自动开始，无需重复发送。\n"
+                    "- 发送 `/agy_queue` 可查看队列，`/agy_clear` 可清空排队。",
                     msg_id,
                 )
-                return
-
-            await self.run_agy_task(
-                target,
-                msg_id,
-                prompt,
-                new_session=(cmd == "agy_new"),
-            )
             return
 
         await self.send_async(target, f"### AGY\n- 未知指令 `/{cmd}`，发 `/help` 查看帮助。", msg_id)
@@ -1548,11 +1886,9 @@ class QQBotApp:
 
         if timed_out or stopped:
             reason = "超时被终止" if timed_out else "已被手动终止"
-            await self.send_async(
-                target,
-                f"### AGY 任务{reason}\n- 耗时 `{elapsed:.0f}s`\n- 已做的文件修改不会回滚，可用 `/agy` 让它检查现状。",
-                msg_id,
-            )
+            msg = f"### AGY 任务{reason}\n- 耗时 `{elapsed:.0f}s`\n- 已做的文件修改不会回滚，可用 `/agy` 让它检查现状。"
+            self.last_agy_response = msg
+            await self.send_async(target, msg, msg_id)
             return
 
         result = _parse_agy_json(stdout_b.decode("utf-8", "replace"))
@@ -1564,12 +1900,12 @@ class QQBotApp:
                 # 会话可能已失效，清掉以便下次自动新建
                 sessions.pop(cwd, None)
                 self.save_state()
-            await self.send_async(
-                target,
+            err_msg = (
                 f"### AGY 执行失败\n```text\n{err[-1500:] or '无输出'}\n```"
-                + ("\n> 已清除当前目录会话，下次将自动新建" if conv_id else ""),
-                msg_id,
+                + ("\n> 已清除当前目录会话，下次将自动新建" if conv_id else "")
             )
+            self.last_agy_response = err_msg
+            await self.send_async(target, err_msg, msg_id)
             return
 
         new_conv = result.get("conversation_id")
@@ -1578,6 +1914,7 @@ class QQBotApp:
             self.save_state()
 
         response = _sanitize_agy_markdown(str(result.get("response") or ""))
+        self.last_agy_response = response
         usage = result.get("usage") or {}
         total_tokens = int(usage.get("total_tokens") or 0)
         footer = (
@@ -1834,10 +2171,37 @@ class QQBotApp:
                 log(f"WebSocket 连接断开 ({e})，5 秒后重连...")
                 await asyncio.sleep(5)
 
+    async def agy_queue_worker(self) -> None:
+        """后台异步任务队列消费者，按序执行收到的 AGY 任务"""
+        log("AGY 任务队列消费者已启动")
+        while True:
+            item = await self.agy_queue.get()
+            self.agy_busy = True
+            try:
+                if time.time() - item.get("queued_at", time.time()) > 1.5:
+                    prompt_preview = item["prompt"].replace("\n", " ")[:30]
+                    await self.send_async(
+                        item["target"],
+                        f"### 🚀 开始处理排队任务\n- 任务内容: `{prompt_preview}`",
+                        item["msg_id"],
+                    )
+                await self.run_agy_task(
+                    target=item["target"],
+                    msg_id=item["msg_id"],
+                    prompt=item["prompt"],
+                    new_session=item["new_session"],
+                )
+            except Exception as e:
+                log(f"AGY 队列执行任务异常: {e}")
+            finally:
+                self.agy_busy = False
+                self.agy_queue.task_done()
+
     async def run(self) -> None:
         await asyncio.gather(
             self.ws_loop(),
             self.scheduler_loop(),
+            self.agy_queue_worker(),
         )
 
 

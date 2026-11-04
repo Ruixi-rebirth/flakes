@@ -3,6 +3,7 @@
   stdenv,
   python3,
   sops,
+  typst,
 }:
 let
   pythonEnv = python3.withPackages (ps: [
@@ -24,7 +25,8 @@ stdenv.mkDerivation {
     install -Dm755 oci_bill_bot.py $out/bin/oci-bill-bot
     substituteInPlace $out/bin/oci-bill-bot \
       --replace-fail "#!/usr/bin/env python3" "#!${pythonEnv}/bin/python3" \
-      --replace-fail '"sops"' '"${sops}/bin/sops"'
+      --replace-fail '"sops"' '"${sops}/bin/sops"' \
+      --replace-fail 'TYPST_BIN = "typst"' 'TYPST_BIN = "${typst}/bin/typst"'
     runHook postInstall
   '';
 

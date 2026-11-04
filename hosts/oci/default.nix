@@ -95,6 +95,12 @@
     antigravity-cli
     oci-ip
     oci-bill-bot
+    typst
+    source-han-sans
+  ];
+
+  fonts.packages = with pkgs; [
+    source-han-sans
   ];
 
   systemd.services.oci-bill-bot = {
