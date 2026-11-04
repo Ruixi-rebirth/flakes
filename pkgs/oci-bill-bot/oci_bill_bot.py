@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -550,6 +550,46 @@ def md_to_typst(md: str) -> str:
     return "\n".join(out)
 
 
+def extract_quoted_text(raw_event: dict[str, Any] | None) -> str | None:
+    """
+    从 QQ 接收到的原始事件 Payload 中提取被引用的消息文本（支持 C2C、群聊及各种引用字段结构）。
+    """
+    if not raw_event:
+        return None
+
+    # 1. QQ 官方标准 msg_elements (C2C 与 群聊引用)
+    msg_elements = raw_event.get("msg_elements")
+    if isinstance(msg_elements, list):
+        texts: list[str] = []
+        for elem in msg_elements:
+            if isinstance(elem, dict):
+                text_elem = elem.get("text_element") or {}
+                cnt = text_elem.get("content")
+                if cnt and cnt.strip():
+                    texts.append(cnt.strip())
+        if texts:
+            return "\n".join(texts).strip()
+
+    # 2. message_reference
+    ref = raw_event.get("message_reference")
+    if isinstance(ref, dict):
+        if ref.get("content"):
+            return str(ref["content"]).strip()
+        msg_obj = ref.get("message")
+        if isinstance(msg_obj, dict) and msg_obj.get("content"):
+            return str(msg_obj["content"]).strip()
+
+    # 3. 常见扩展或客户端自定引用字段
+    for k in ("quoted_message", "ref_msg", "quote", "reply"):
+        val = raw_event.get(k)
+        if isinstance(val, dict) and val.get("content"):
+            return str(val["content"]).strip()
+        elif isinstance(val, str) and val.strip():
+            return val.strip()
+
+    return None
+
+
 def _parse_agy_json(raw_text: str) -> dict[str, Any] | None:
     text = raw_text.strip()
     if not text:
@@ -905,6 +945,7 @@ class QQBotApp:
         self.agy_busy: bool = False
         self.last_agy_response: str = ""
         self.last_bot_reply: str = ""
+        self.recent_replies: deque[str] = deque(maxlen=30)
         self.state: dict[str, Any] = self.load_state()
         if not self.owner_openid and self.state.get("owner_openid"):
             self.owner_openid = str(self.state["owner_openid"])
@@ -1249,6 +1290,7 @@ class QQBotApp:
         raw_content: str,
         msg_id: str,
         attachments: list[dict[str, Any]] | None = None,
+        raw_event: dict[str, Any] | None = None,
     ) -> None:
         loop = asyncio.get_running_loop()
 
@@ -1346,8 +1388,17 @@ class QQBotApp:
         if cmd not in KNOWN_COMMANDS and not cmd.startswith("oci_") and (cmd_rest or saved_files):
             cmd = "agy"
 
+        # 智能识别：若用户引用了一条消息，并且附言包含渲染相关词汇，自动转为 render 指令
+        quoted_detected = extract_quoted_text(raw_event)
+        if quoted_detected and any(kw in text for kw in ("渲染", "转图", "转成图", "做成图", "生成图")):
+            cmd = "render"
+            cmd_args = []
+            cmd_rest = ""
+
         if cmd.startswith("agy") or cmd in ("render", "render_last", "r"):
-            await self.handle_agy_command(target, msg_id, cmd, cmd_args, cmd_rest)
+            await self.handle_agy_command(
+                target, msg_id, cmd, cmd_args, cmd_rest, raw_event=raw_event
+            )
             return
 
         if cmd == "oci_roll":
@@ -1586,6 +1637,8 @@ class QQBotApp:
         self, target: dict[str, Any], content: str, msg_id: str | None
     ) -> bool:
         self.last_bot_reply = content
+        if content and content.strip():
+            self.recent_replies.append(content.strip())
         loop = asyncio.get_running_loop()
         ok = await loop.run_in_executor(None, self.send_message, target, content, msg_id)
         if not ok and RAW_URL_RE.search(content):
@@ -1601,6 +1654,7 @@ class QQBotApp:
         cmd: str,
         cmd_args: list[str],
         cmd_rest: str,
+        raw_event: dict[str, Any] | None = None,
     ) -> None:
         if cmd == "agy_status":
             await self.send_async(target, self.build_agy_status(), msg_id)
@@ -1655,11 +1709,38 @@ class QQBotApp:
             return
 
         if cmd in ("render", "render_last", "r"):
-            content_to_render = cmd_rest.strip() if cmd_rest else (self.last_agy_response or self.last_bot_reply)
+            content_to_render = cmd_rest.strip() if cmd_rest else ""
+
+            # 1. 检测是否有引用消息
+            if not content_to_render:
+                quoted = extract_quoted_text(raw_event)
+                if quoted:
+                    log(f"检测到引用消息内容: {quoted[:50]}...")
+                    clean_quoted = quoted.strip()
+                    matched_full = None
+                    for hist in reversed(self.recent_replies):
+                        if (
+                            clean_quoted in hist
+                            or hist in clean_quoted
+                            or hist.startswith(clean_quoted[:30])
+                        ):
+                            matched_full = hist
+                            break
+                    content_to_render = matched_full or clean_quoted
+
+            # 2. 兜底回退：渲染上一条回复
+            if not content_to_render:
+                content_to_render = self.last_agy_response or self.last_bot_reply
+
             if not content_to_render:
                 await self.send_async(
                     target,
-                    "### 渲染失败\n- 暂无可渲染的历史回复。\n- 用法: `/render` 渲染上一条回复，或 `/render <Markdown文本>` 渲染指定文本。",
+                    "### 渲染失败\n"
+                    "- 暂无可渲染的历史回复或引用消息。\n"
+                    "- **用法**:\n"
+                    "  - 引用任意一条消息并发送 `/render` (或 `/r`)\n"
+                    "  - 直接发送 `/render` 渲染机器人的上一条回复\n"
+                    "  - 发送 `/render <Markdown文本>` 渲染指定文本",
                     msg_id,
                 )
                 return
@@ -1915,6 +1996,8 @@ class QQBotApp:
 
         response = _sanitize_agy_markdown(str(result.get("response") or ""))
         self.last_agy_response = response
+        if response and response.strip():
+            self.recent_replies.append(response.strip())
         usage = result.get("usage") or {}
         total_tokens = int(usage.get("total_tokens") or 0)
         footer = (
@@ -2104,6 +2187,7 @@ class QQBotApp:
                                                 content,
                                                 msg_id,
                                                 attachments,
+                                                raw_event=d,
                                             )
                                         )
                                 elif event_type == "GROUP_AT_MESSAGE_CREATE":
@@ -2128,6 +2212,7 @@ class QQBotApp:
                                                 content,
                                                 msg_id,
                                                 attachments,
+                                                raw_event=d,
                                             )
                                         )
                                 elif event_type == "AT_MESSAGE_CREATE":
@@ -2145,6 +2230,7 @@ class QQBotApp:
                                                 content,
                                                 msg_id,
                                                 attachments,
+                                                raw_event=d,
                                             )
                                         )
                                 elif event_type == "DIRECT_MESSAGE_CREATE":
@@ -2162,6 +2248,7 @@ class QQBotApp:
                                                 content,
                                                 msg_id,
                                                 attachments,
+                                                raw_event=d,
                                             )
                                         )
                     finally:
