@@ -96,5 +96,8 @@
     configFile = config.sops.secrets."daidai.yaml".path;
   };
 
-  systemd.services.daidai.serviceConfig.User = me.userName;
+  systemd.services.daidai = {
+    serviceConfig.User = me.userName;
+    environment.HOME = "/home/${me.userName}";
+  };
 }
