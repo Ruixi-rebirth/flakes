@@ -18,12 +18,7 @@
       keyFile = "/var/lib/sops-nix/keys.txt";
     };
     secrets = {
-      oci_api_key.owner = me.userName;
-      oci_user_ocid.owner = me.userName;
-      oci_tenancy_ocid.owner = me.userName;
-      qq_bot_appid.owner = me.userName;
-      qq_bot_secret.owner = me.userName;
-      qq_bot_owner_openid.owner = me.userName;
+      "daidai.yaml".owner = me.userName;
     };
   };
 
@@ -93,41 +88,13 @@
 
   environment.systemPackages = with pkgs; [
     antigravity-cli
-    oci-ip
-    oci-bill-bot
-    typst
-    source-han-sans
+    yazi
   ];
 
-  fonts.packages = with pkgs; [
-    source-han-sans
-  ];
-
-  systemd.services.oci-bill-bot = {
-    description = "QQ WebSocket OCI Daily Bill & Safety Bot";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ];
-    wants = [ "network-online.target" ];
-    path =
-      with pkgs;
-      [
-        bash
-        git
-        nix
-        coreutils
-        systemd
-      ]
-      ++ config.environment.systemPackages;
-    environment = {
-      HOME = "/home/${me.userName}";
-    };
-    serviceConfig = {
-      User = me.userName;
-      WorkingDirectory = "/home/${me.userName}";
-      StateDirectory = "oci-bill-bot";
-      ExecStart = "${pkgs.oci-bill-bot}/bin/oci-bill-bot --state-file /var/lib/oci-bill-bot/state.json";
-      Restart = "always";
-      RestartSec = "5s";
-    };
+  services.daidai = {
+    enable = true;
+    configFile = config.sops.secrets."daidai.yaml".path;
   };
+
+  systemd.services.daidai.serviceConfig.User = me.userName;
 }

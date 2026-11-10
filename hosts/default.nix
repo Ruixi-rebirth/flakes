@@ -100,6 +100,7 @@
           inputs.lanzaboote.nixosModules.lanzaboote
           inputs.disko.nixosModules.disko
           inputs.sops-nix.nixosModules.sops
+          inputs.daidai.nixosModules.default
         ];
       };
     };

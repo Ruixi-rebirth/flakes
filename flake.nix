@@ -108,10 +108,6 @@
               ];
             };
           };
-          packages = {
-            oci-ip = pkgs.callPackage ./pkgs/oci-ip { };
-            oci-bill-bot = pkgs.callPackage ./pkgs/oci-bill-bot { };
-          };
           # used by the `nix fmt` command
           formatter = config.treefmt.build.wrapper;
         };
@@ -175,6 +171,10 @@
     cppup.url = "github:Ruixi-rebirth/cppup";
     nixos-wsl.url = "github:nix-community/NixOS-WSL";
     go-musicfox.url = "github:go-musicfox/go-musicfox";
+    daidai = {
+      url = "github:Ruixi-rebirth/daidai";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   nixConfig = {
