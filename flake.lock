@@ -217,11 +217,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1794550421,
-        "narHash": "sha256-9WaKX5+30HbmL3KdpuImGT7uXD2DSKFhLjTw7Go7/zI=",
+        "lastModified": 1794550970,
+        "narHash": "sha256-3cxK2nbY4M3OWF1wXi1pytbGkq1ajomciXNmA/AFt9w=",
         "owner": "Ruixi-rebirth",
         "repo": "daidai",
-        "rev": "82fa58b634e9edf792b787abacafad9f82bcf7c9",
+        "rev": "31009659418c33d0abacdad15e1e4de285faf473",
         "type": "github"
       },
       "original": {
