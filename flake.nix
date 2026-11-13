@@ -173,7 +173,6 @@
     go-musicfox.url = "github:go-musicfox/go-musicfox";
     daidai = {
       url = "github:Ruixi-rebirth/daidai";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
