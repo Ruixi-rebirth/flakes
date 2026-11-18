@@ -55,8 +55,8 @@ in
     (pkgs.writeShellScriptBin "singbox-links" ''
       set -euo pipefail
 
-      # Auto sudo if cannot read root-only secret files
-      if [ "$(id -u)" -ne 0 ] && { [ ! -r "${config.sops.secrets.singbox_uuid.path}" ] || [ ! -r "${certFile}" ]; }; then
+      # Auto sudo if not root (required for reading secrets and writing /var/lib/sing-box-sub)
+      if [ "$(id -u)" -ne 0 ]; then
         exec sudo "$0" "$@"
       fi
 
