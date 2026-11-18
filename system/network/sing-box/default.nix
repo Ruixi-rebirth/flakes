@@ -62,6 +62,21 @@ in
     };
   };
 
+  # ============================================================================
+  # 密钥体系说明 (Sops-nix 加密存储在 secrets/secrets.yaml):
+  # - singbox_uuid:
+  #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate uuid`
+  #   - 双重关联作用:
+  #     1) 作为 VLESS Reality 节点的客户端用户连接鉴权 UUID；
+  #     2) 直接复用为 Caddy 订阅端点的防探测密钥路径 (/sub/<uuid>)，杜绝全网暴力嗅探。
+  # - singbox_reality_private_key:
+  #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate reality-keypair`
+  #   - 对应的 PublicKey 填入文件顶部的 realityPublicKey 变量。
+  # - singbox_hy2_password:
+  #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate rand --base64 16`
+  # - singbox_hy2_cert / singbox_hy2_key:
+  #   - Hysteria 2 自签证书与私钥，通过 openssl 生成并存入 sops，详见 secrets/README.md。
+  # ============================================================================
   sops.secrets = {
     singbox_uuid.owner = me.userName;
     singbox_reality_private_key = { };
@@ -232,6 +247,7 @@ in
           listen_port = realityPort;
           users = [
             {
+              # 此处使用的 uuid 即 sops 中的 singbox_uuid，与订阅分发路径 /sub/<uuid> 完全一致
               uuid = secretPath "singbox_uuid";
               flow = "xtls-rprx-vision";
             }
@@ -346,6 +362,7 @@ in
     enable = true;
     extraConfig = ''
       :${toString subPort} {
+        # 路径关联: 提取 /sub/<uuid> 中的 UUID (即 sops 中的 singbox_uuid)，重写映射到磁盘静态文件
         @sub path_regexp sub ^/sub/([a-zA-Z0-9-]+)$
         handle @sub {
           header Content-Type "text/plain; charset=utf-8"
