@@ -10,6 +10,8 @@ let
   realityPublicKey = "333ml7s4Nj9yV2jz3ZL1J-G_1OX1bb6Yk-9ALFOsqB0";
   realityPort = 443;
   hy2Port = 8443;
+  subPort = 2080;
+  subDir = "/var/lib/sing-box-sub";
 
   # Hysteria 2 certificate/key are kept in sops so a new machine needs no manual cert generation
   certFile = config.sops.secrets.singbox_hy2_cert.path;
@@ -90,6 +92,7 @@ in
       # Deduplicate hosts
       mapfile -t unique_hosts < <(printf "%s\n" "''${hosts[@]}" | sort -u)
 
+      all_links=()
       for host in "''${unique_hosts[@]}"; do
         if [[ "$host" == *:* ]]; then
           # IPv6 standard bracket formatting
@@ -108,6 +111,8 @@ in
         hy443="hysteria2://''${hy2_enc}@''${endpoint}:${toString realityPort}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-443''${suffix}"
         hy8443="hysteria2://''${hy2_enc}@''${endpoint}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-8443''${suffix}"
 
+        all_links+=("$vless" "$hy443" "$hy8443")
+
         echo "# [Host: ''${host}] VLESS + Reality (TCP ${toString realityPort})"
         echo "$vless"
         echo
@@ -118,6 +123,22 @@ in
         echo "$hy8443"
         echo
       done
+
+      # Export base64 subscription file
+      mkdir -p "${subDir}"
+      printf "%s\n" "''${all_links[@]}" | ${pkgs.coreutils}/bin/base64 -w0 > "${subDir}/''${uuid}"
+      chmod 644 "${subDir}/''${uuid}"
+
+      echo "=================================================="
+      echo "  📱 客户端订阅链接 (通用 Base64):"
+      for h in "''${unique_hosts[@]}"; do
+        if [[ "$h" == *:* ]]; then
+          echo "  • IPv6: http://[''${h}]:${toString subPort}/sub/''${uuid}"
+        else
+          echo "  • IPv4: http://''${h}:${toString subPort}/sub/''${uuid}"
+        fi
+      done
+      echo "=================================================="
     '')
   ];
 
@@ -207,9 +228,44 @@ in
     ProtectControlGroups = true;
   };
 
-  # Firewall rules for sing-box
+  # Lightweight Caddy server for subscription distribution
+  services.caddy = {
+    enable = true;
+    extraConfig = ''
+      :${toString subPort} {
+        @sub path_regexp sub ^/sub/([a-zA-Z0-9-]+)$
+        handle @sub {
+          header Content-Type "text/plain; charset=utf-8"
+          rewrite * /{re.sub.1}
+          root * ${subDir}
+          file_server
+        }
+        handle {
+          respond 404
+        }
+      }
+    '';
+  };
+
+  # Automatic generation of subscription file at boot / activation
+  systemd.services.singbox-sub-init = {
+    description = "Generate sing-box base64 subscription on boot";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "network-online.target" "sops-nix.service" ];
+    wants = [ "network-online.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${pkgs.bash}/bin/bash -c '${config.system.path}/bin/singbox-links'";
+      RemainAfterExit = true;
+    };
+  };
+
+  # Firewall rules for sing-box and subscription
   networking.firewall = {
-    allowedTCPPorts = [ realityPort ];
+    allowedTCPPorts = [
+      realityPort
+      subPort
+    ];
     allowedUDPPorts = [
       realityPort
       hy2Port
