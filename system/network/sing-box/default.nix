@@ -1,18 +1,21 @@
 {
   config,
   pkgs,
+  lib,
   me,
   ...
 }:
 let
+  cfgSub = config.services.singbox-sub;
+
   # Reality handshake target / fallback site
   realitySni = "gateway.icloud.com";
+  # Reality 公钥 (由 `nix shell nixpkgs#sing-box -c sing-box generate reality-keypair` 生成，PublicKey 填入此处，PrivateKey 存入 sops 的 singbox_reality_private_key)
   realityPublicKey = "333ml7s4Nj9yV2jz3ZL1J-G_1OX1bb6Yk-9ALFOsqB0";
   realityPort = 443;
   hy2Port = 8443;
-  subPort = 2080;
+  subPort = cfgSub.port;
   subDir = "/var/lib/sing-box-sub";
-  subDomain = "fq.ruixi2fp.top"; # Cloudflare Worker public subscription domain
 
   # Hysteria 2 certificate/key are kept in sops so a new machine needs no manual cert generation
   certFile = config.sops.secrets.singbox_hy2_cert.path;
@@ -41,6 +44,24 @@ let
     };
 in
 {
+  options.services.singbox-sub = {
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "启用本地 Caddy 订阅服务";
+    };
+    publicDomain = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "公网分发域名 (如 Cloudflare Worker 自定义域，为空时不输出)";
+    };
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 2080;
+      description = "本地 Caddy 订阅服务监听端口";
+    };
+  };
+
   sops.secrets = {
     singbox_uuid.owner = me.userName;
     singbox_reality_private_key = { };
@@ -59,14 +80,26 @@ in
       output_json=false
       export_sub=false
       positional_hosts=()
-      for arg in "$@"; do
-        if [ "$arg" = "--json" ] || [ "$arg" = "-j" ]; then
-          output_json=true
-        elif [ "$arg" = "--export" ]; then
-          export_sub=true
-        else
-          positional_hosts+=("$arg")
-        fi
+      sub_domain="${cfgSub.publicDomain}"
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --json|-j)
+            output_json=true
+            shift
+            ;;
+          --export)
+            export_sub=true
+            shift
+            ;;
+          --domain|-d)
+            sub_domain="$2"
+            shift 2
+            ;;
+          *)
+            positional_hosts+=("$1")
+            shift
+            ;;
+        esac
       done
 
       uuid=$(cat ${config.sops.secrets.singbox_uuid.path})
@@ -104,8 +137,8 @@ in
       all_links=()
       nodes_json_entries=()
       sub_urls_json_entries=()
-      if [ -n "${subDomain}" ]; then
-        sub_urls_json_entries+=("\"public\": \"https://${subDomain}/sub/''${uuid}\"")
+      if [ -n "$sub_domain" ]; then
+        sub_urls_json_entries+=("\"public\": \"https://''${sub_domain}/sub/''${uuid}\"")
       fi
 
       for host in "''${unique_hosts[@]}"; do
@@ -166,8 +199,8 @@ in
       else
         # Clean plain output
         echo "# Subscription"
-        if [ -n "${subDomain}" ]; then
-          echo "https://${subDomain}/sub/''${uuid}"
+        if [ -n "$sub_domain" ]; then
+          echo "https://''${sub_domain}/sub/''${uuid}"
         fi
         for h in "''${unique_hosts[@]}"; do
           if [[ "$h" == *:* ]]; then
@@ -309,7 +342,7 @@ in
   # ============================================================================
 
   # Lightweight Caddy server for subscription distribution
-  services.caddy = {
+  services.caddy = lib.mkIf cfgSub.enable {
     enable = true;
     extraConfig = ''
       :${toString subPort} {
@@ -328,7 +361,7 @@ in
   };
 
   # Automatic generation of subscription file at boot / activation
-  systemd.services.singbox-sub-init = {
+  systemd.services.singbox-sub-init = lib.mkIf cfgSub.enable {
     description = "Generate sing-box base64 subscription on boot";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "sops-nix.service" ];
@@ -344,8 +377,7 @@ in
   networking.firewall = {
     allowedTCPPorts = [
       realityPort
-      subPort
-    ];
+    ] ++ lib.optional cfgSub.enable subPort;
     allowedUDPPorts = [
       realityPort
       hy2Port

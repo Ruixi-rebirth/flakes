@@ -92,6 +92,11 @@
     yazi
   ];
 
+  services.singbox-sub = {
+    enable = true;
+    publicDomain = "fq.ruixi2fp.top";
+  };
+
   services.daidai = {
     enable = true;
     configFile = config.sops.secrets."daidai.yaml".path;
