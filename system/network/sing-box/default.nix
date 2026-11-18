@@ -160,47 +160,18 @@ in
             nodes: $nodes
           }'
       else
-        # Beautiful human-readable CLI formatting
-        echo "┌───────────────────────────────────────────────────────────────┐"
-        echo "│                  🚀 Sing-Box Node Manager                     │"
-        echo "└───────────────────────────────────────────────────────────────┘"
-        echo
-        echo "📡 客户端订阅链接 (通用 Base64 格式，支持 v2rayN / 小火箭 等):"
+        # Clean plain output
+        echo "# Subscription"
         for h in "''${unique_hosts[@]}"; do
           if [[ "$h" == *:* ]]; then
-            printf "  • [IPv6] http://[''${h}]:%s/sub/%s\n" "${toString subPort}" "$uuid"
+            echo "http://[''${h}]:${toString subPort}/sub/''${uuid}"
           else
-            printf "  • [IPv4] http://''${h}:%s/sub/%s\n" "${toString subPort}" "$uuid"
+            echo "http://''${h}:${toString subPort}/sub/''${uuid}"
           fi
         done
         echo
-        echo "─────────────────────────────────────────────────────────────────"
-        echo "📋 单节点配置直连列表 (共 ''${#all_links[@]} 个节点):"
-        echo "─────────────────────────────────────────────────────────────────"
-
-        for host in "''${unique_hosts[@]}"; do
-          ip_type="IPv4"
-          if [[ "$host" == *:* ]]; then
-            ip_type="IPv6"
-          fi
-          echo
-          echo "🌐 Host [$ip_type]: $host"
-          echo "  ├─ VLESS-Reality (TCP ${toString realityPort}):"
-          vless_link=$(printf "%s\n" "''${all_links[@]}" | grep -F "@" | grep -F "$host" | grep "vless" | head -n1 || true)
-          echo "     $vless_link"
-          echo
-          echo "  ├─ Hysteria 2 (UDP ${toString realityPort}):"
-          hy443_link=$(printf "%s\n" "''${all_links[@]}" | grep -F "@" | grep -F "$host" | grep "hysteria2" | grep ":${toString realityPort}/" | head -n1 || true)
-          echo "     $hy443_link"
-          echo
-          echo "  └─ Hysteria 2 (UDP ${toString hy2Port}):"
-          hy8443_link=$(printf "%s\n" "''${all_links[@]}" | grep -F "@" | grep -F "$host" | grep "hysteria2" | grep ":${toString hy2Port}/" | head -n1 || true)
-          echo "     $hy8443_link"
-        done
-        echo
-        echo "─────────────────────────────────────────────────────────────────"
-        echo "💡 提示: 可通过执行 'singbox-links --json' 获取标准结构化 JSON 输出"
-        echo
+        echo "# Nodes"
+        printf "%s\n" "''${all_links[@]}"
       fi
     '')
   ];
