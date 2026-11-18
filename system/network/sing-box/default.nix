@@ -54,23 +54,53 @@ in
       if [ "$(id -u)" -ne 0 ] && [ ! -r "${config.sops.secrets.singbox_uuid.path}" ]; then
         exec sudo "$0" "$@"
       fi
-      host="''${1:-$(${pkgs.curl}/bin/curl -4s --max-time 3 https://icanhazip.com 2>/dev/null || echo "127.0.0.1")}"
+
       uuid=$(cat ${config.sops.secrets.singbox_uuid.path})
       hy2=$(cat ${config.sops.secrets.singbox_hy2_password.path})
       hy2_enc=$(printf %s "$hy2" | ${pkgs.jq}/bin/jq -sRr @uri)
+      cert_sha256=$(${pkgs.openssl}/bin/openssl x509 -noout -fingerprint -sha256 -in "${certFile}" 2>/dev/null | cut -d= -f2 | tr -d :)
 
-      vless="vless://''${uuid}@''${host}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&type=tcp#OCI-VLESS-Reality"
-      hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&insecure=1#OCI-Hysteria2-443"
-      hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&insecure=1#OCI-Hysteria2-8443"
+      # Discover all public IP addresses
+      if [ "$#" -gt 0 ]; then
+        hosts=("$@")
+      else
+        mapfile -t local_ips < <(${pkgs.iproute2}/bin/ip -j -4 addr show scope global | ${pkgs.jq}/bin/jq -r '.[].addr_info[].local')
+        hosts=()
+        for ip in "''${local_ips[@]}"; do
+          pub_ip=$(${pkgs.curl}/bin/curl -4s --interface "$ip" --max-time 3 https://icanhazip.com 2>/dev/null || true)
+          if [ -n "$pub_ip" ]; then
+            hosts+=("$pub_ip")
+          fi
+        done
+        if [ "''${#hosts[@]}" -eq 0 ]; then
+          fallback=$(${pkgs.curl}/bin/curl -4s --max-time 3 https://icanhazip.com 2>/dev/null || echo "127.0.0.1")
+          hosts+=("$fallback")
+        fi
+      fi
 
-      echo "# VLESS + Reality (TCP ${toString realityPort})"
-      echo "$vless"
-      echo
-      echo "# Hysteria 2 (UDP ${toString realityPort})"
-      echo "$hy443"
-      echo
-      echo "# Hysteria 2 (UDP ${toString hy2Port})"
-      echo "$hy8443"
+      # Deduplicate hosts
+      mapfile -t unique_hosts < <(printf "%s\n" "''${hosts[@]}" | sort -u)
+
+      for host in "''${unique_hosts[@]}"; do
+        suffix=""
+        if [ "''${#unique_hosts[@]}" -gt 1 ]; then
+          suffix="-''${host//./-}"
+        fi
+
+        vless="vless://''${uuid}@''${host}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&sid=&type=tcp#OCI-VLESS-Reality''${suffix}"
+        hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-443''${suffix}"
+        hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-8443''${suffix}"
+
+        echo "# [Host: ''${host}] VLESS + Reality (TCP ${toString realityPort})"
+        echo "$vless"
+        echo
+        echo "# [Host: ''${host}] Hysteria 2 (UDP ${toString realityPort})"
+        echo "$hy443"
+        echo
+        echo "# [Host: ''${host}] Hysteria 2 (UDP ${toString hy2Port})"
+        echo "$hy8443"
+        echo
+      done
     '')
   ];
 
