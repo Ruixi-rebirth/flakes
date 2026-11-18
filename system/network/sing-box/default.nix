@@ -62,22 +62,23 @@ in
     };
   };
 
-  # ============================================================================
-  # 密钥体系说明 (Sops-nix 加密存储在 secrets/secrets.yaml):
-  # - singbox_uuid:
-  #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate uuid`
-  #   - 双重关联作用:
-  #     1) 作为 VLESS Reality 节点的客户端用户连接鉴权 UUID；
-  #     2) 直接复用为 Caddy 订阅端点的防探测密钥路径 (/sub/<uuid>)，杜绝全网暴力嗅探。
-  # - singbox_reality_private_key:
-  #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate reality-keypair`
-  #   - 对应的 PublicKey 填入文件顶部的 realityPublicKey 变量。
-  # - singbox_hy2_password:
-  #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate rand --base64 16`
-  # - singbox_hy2_cert / singbox_hy2_key:
-  #   - Hysteria 2 自签证书与私钥，通过 openssl 生成并存入 sops，详见 secrets/README.md。
-  # ============================================================================
-  sops.secrets = {
+  config = {
+    # ============================================================================
+    # 密钥体系说明 (Sops-nix 加密存储在 secrets/secrets.yaml):
+    # - singbox_uuid:
+    #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate uuid`
+    #   - 双重关联作用:
+    #     1) 作为 VLESS Reality 节点的客户端用户连接鉴权 UUID；
+    #     2) 直接复用为 Caddy 订阅端点的防探测密钥路径 (/sub/<uuid>)，杜绝全网暴力嗅探。
+    # - singbox_reality_private_key:
+    #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate reality-keypair`
+    #   - 对应的 PublicKey 填入文件顶部的 realityPublicKey 变量。
+    # - singbox_hy2_password:
+    #   - 生成命令: `nix shell nixpkgs#sing-box -c sing-box generate rand --base64 16`
+    # - singbox_hy2_cert / singbox_hy2_key:
+    #   - Hysteria 2 自签证书与私钥，通过 openssl 生成并存入 sops，详见 secrets/README.md。
+    # ============================================================================
+    sops.secrets = {
     singbox_uuid.owner = me.userName;
     singbox_reality_private_key = { };
     singbox_hy2_password.owner = me.userName;
@@ -409,4 +410,5 @@ in
       ip6tables -t mangle -D POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
     '';
   };
+};
 }
