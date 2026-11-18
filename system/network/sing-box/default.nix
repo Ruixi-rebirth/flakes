@@ -63,7 +63,7 @@ in
       hy2_enc=$(printf %s "$hy2" | ${pkgs.jq}/bin/jq -sRr @uri)
       cert_sha256=$(${pkgs.openssl}/bin/openssl x509 -noout -fingerprint -sha256 -in "${certFile}" 2>/dev/null | cut -d= -f2 | tr -d :)
 
-      # Discover all public IP addresses
+      # Discover all public IP addresses (IPv4 & IPv6)
       if [ "$#" -gt 0 ]; then
         hosts=("$@")
       else
@@ -79,20 +79,34 @@ in
           fallback=$(${pkgs.curl}/bin/curl -4s --max-time 3 https://icanhazip.com 2>/dev/null || echo "127.0.0.1")
           hosts+=("$fallback")
         fi
+
+        # Discover public IPv6 addresses
+        mapfile -t v6_ips < <(${pkgs.iproute2}/bin/ip -j -6 addr show scope global | ${pkgs.jq}/bin/jq -r '.[].addr_info[]? | select(.scope == "global" and .local != null) | .local')
+        for ip6 in "''${v6_ips[@]}"; do
+          hosts+=("$ip6")
+        done
       fi
 
       # Deduplicate hosts
       mapfile -t unique_hosts < <(printf "%s\n" "''${hosts[@]}" | sort -u)
 
       for host in "''${unique_hosts[@]}"; do
-        suffix=""
-        if [ "''${#unique_hosts[@]}" -gt 1 ]; then
-          suffix="-''${host//./-}"
+        if [[ "$host" == *:* ]]; then
+          # IPv6 standard bracket formatting
+          endpoint="[''${host}]"
+          tag_host="''${host//:/-}"
+          suffix="-IPv6-''${tag_host}"
+        else
+          endpoint="''${host}"
+          suffix=""
+          if [ "''${#unique_hosts[@]}" -gt 1 ]; then
+            suffix="-''${host//./-}"
+          fi
         fi
 
-        vless="vless://''${uuid}@''${host}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&sid=&type=tcp#OCI-VLESS-Reality''${suffix}"
-        hy443="hysteria2://''${hy2_enc}@''${host}:${toString realityPort}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-443''${suffix}"
-        hy8443="hysteria2://''${hy2_enc}@''${host}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-8443''${suffix}"
+        vless="vless://''${uuid}@''${endpoint}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&sid=&type=tcp#OCI-VLESS-Reality''${suffix}"
+        hy443="hysteria2://''${hy2_enc}@''${endpoint}:${toString realityPort}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-443''${suffix}"
+        hy8443="hysteria2://''${hy2_enc}@''${endpoint}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-8443''${suffix}"
 
         echo "# [Host: ''${host}] VLESS + Reality (TCP ${toString realityPort})"
         echo "$vless"
