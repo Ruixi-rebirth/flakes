@@ -55,16 +55,14 @@ in
     (pkgs.writeShellScriptBin "singbox-links" ''
       set -euo pipefail
 
-      # Auto sudo if not root (required for reading secrets and writing /var/lib/sing-box-sub)
-      if [ "$(id -u)" -ne 0 ]; then
-        exec sudo "$0" "$@"
-      fi
-
       output_json=false
+      export_sub=false
       positional_hosts=()
       for arg in "$@"; do
         if [ "$arg" = "--json" ] || [ "$arg" = "-j" ]; then
           output_json=true
+        elif [ "$arg" = "--export" ]; then
+          export_sub=true
         else
           positional_hosts+=("$arg")
         fi
@@ -140,10 +138,12 @@ in
         )
       done
 
-      # Export base64 subscription file for Caddy
-      mkdir -p "${subDir}"
-      printf "%s\n" "''${all_links[@]}" | ${pkgs.coreutils}/bin/base64 -w0 > "${subDir}/''${uuid}"
-      chmod 644 "${subDir}/''${uuid}"
+      # Export base64 subscription file for Caddy (only when explicitly requested)
+      if [ "$export_sub" = true ]; then
+        mkdir -p "${subDir}"
+        printf "%s\n" "''${all_links[@]}" | ${pkgs.coreutils}/bin/base64 -w0 > "${subDir}/''${uuid}"
+        chmod 644 "${subDir}/''${uuid}"
+      fi
 
       if [ "$output_json" = true ]; then
         # Structured JSON output
@@ -289,7 +289,7 @@ in
     wants = [ "network-online.target" ];
     serviceConfig = {
       Type = "oneshot";
-      ExecStart = "${pkgs.bash}/bin/bash -c '${config.system.path}/bin/singbox-links'";
+      ExecStart = "${config.system.path}/bin/singbox-links --export";
       RemainAfterExit = true;
     };
   };
