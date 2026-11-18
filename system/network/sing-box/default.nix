@@ -12,6 +12,7 @@ let
   hy2Port = 8443;
   subPort = 2080;
   subDir = "/var/lib/sing-box-sub";
+  subDomain = "fq.ruixi2fp.top"; # Cloudflare Worker public subscription domain
 
   # Hysteria 2 certificate/key are kept in sops so a new machine needs no manual cert generation
   certFile = config.sops.secrets.singbox_hy2_cert.path;
@@ -103,6 +104,9 @@ in
       all_links=()
       nodes_json_entries=()
       sub_urls_json_entries=()
+      if [ -n "${subDomain}" ]; then
+        sub_urls_json_entries+=("\"public\": \"https://${subDomain}/sub/''${uuid}\"")
+      fi
 
       for host in "''${unique_hosts[@]}"; do
         if [[ "$host" == *:* ]]; then
@@ -162,6 +166,9 @@ in
       else
         # Clean plain output
         echo "# Subscription"
+        if [ -n "${subDomain}" ]; then
+          echo "https://${subDomain}/sub/''${uuid}"
+        fi
         for h in "''${unique_hosts[@]}"; do
           if [[ "$h" == *:* ]]; then
             echo "http://[''${h}]:${toString subPort}/sub/''${uuid}"
@@ -261,6 +268,45 @@ in
     ProtectKernelModules = true;
     ProtectControlGroups = true;
   };
+
+  # ============================================================================
+  # 订阅服务架构与 Cloudflare Worker 反向代理配置指南
+  # ============================================================================
+  # 为了避免境内 GFW 阻断及扫描 VPS 端口，同时为客户端提供标准、高可用的 HTTPS 订阅，
+  # 本节点架构采用「本地 Caddy 静态生成 + Cloudflare Worker 前端分发」模式：
+  #
+  # 1. 节点与订阅生成:
+  #    - singbox-links --export 会根据当前的 sops 密钥与动态 IP 自动生成 Base64 订阅文件，
+  #      存放在 /var/lib/sing-box-sub/<uuid>（路径仅包含 UUID 密钥，防止路径扫描）。
+  #    - 本机 Caddy 仅监听内部 HTTP 端口 (2080)，只响应 /sub/<uuid>，其它访问一律返回 404。
+  #
+  # 2. Cloudflare Worker + 自定义域名部署流程 (重要运维记录):
+  #    第 1 步: 创建 Cloudflare Worker
+  #      - 新建 Worker (如 fq-subscript)，编写透明代理脚本：
+  #        const subscriptURL = "http://vps.ruixi2fp.top:2080";
+  #        export default {
+  #          async fetch(request) {
+  #            const url = new URL(request.url);
+  #            return fetch(subscriptURL + url.pathname);
+  #          }
+  #        };
+  #
+  #    第 2 步: 配置源站 DNS 解析记录 (灰云 / 仅 DNS)
+  #      - 在 Cloudflare DNS 新增一条 A 记录（例如 vps.ruixi2fp.top），指向 VPS 真实公网 IPv4。
+  #      - 【关键注意】: 代理状态必须设为「仅 DNS / 灰色云朵」，切勿开启橙色代理！
+  #        原因: Cloudflare 的公网边缘反向代理仅支持 80/443 等标准端口；
+  #        而灰云解析允许 Worker 直接通过源站的 2080 端口与 VPS 的 Caddy 建立回源 TCP 连接。
+  #
+  #    第 3 步: 绑定前端自定义域 (Custom Domain，非路由 Route)
+  #      - 进入 Worker 页面 ->「设置 (Settings)」->「域和路由 (Domains & Routes)」。
+  #      - 点击「添加 (Add)」-> 选择「自定义域 (Custom Domain)」，输入公共订阅域名 (如 fq.ruixi2fp.top)。
+  #      - 【关键注意】: 务必使用「自定义域」而非「路由 (Route)」:
+  #        自定义域能全自动托管 DNS、颁发 SSL 证书，并天然支持通配所有子路径 (/*)，
+  #        避免了路由模式下因未写通配符导致 /sub/<uuid> 匹配失败而触发 522 超时的问题。
+  #
+  # 3. 最终通用订阅链接:
+  #    https://fq.ruixi2fp.top/sub/<uuid>
+  # ============================================================================
 
   # Lightweight Caddy server for subscription distribution
   services.caddy = {
