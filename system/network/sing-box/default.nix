@@ -42,7 +42,10 @@ in
     singbox_uuid.owner = me.userName;
     singbox_reality_private_key = { };
     singbox_hy2_password.owner = me.userName;
-    singbox_hy2_cert.owner = "sing-box";
+    singbox_hy2_cert = {
+      owner = "sing-box";
+      mode = "0444";
+    };
     singbox_hy2_key.owner = "sing-box";
   };
 
@@ -51,7 +54,7 @@ in
       set -euo pipefail
 
       # Auto sudo if cannot read root-only secret files
-      if [ "$(id -u)" -ne 0 ] && [ ! -r "${config.sops.secrets.singbox_uuid.path}" ]; then
+      if [ "$(id -u)" -ne 0 ] && { [ ! -r "${config.sops.secrets.singbox_uuid.path}" ] || [ ! -r "${certFile}" ]; }; then
         exec sudo "$0" "$@"
       fi
 
