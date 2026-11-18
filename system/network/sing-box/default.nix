@@ -60,14 +60,24 @@ in
         exec sudo "$0" "$@"
       fi
 
+      output_json=false
+      positional_hosts=()
+      for arg in "$@"; do
+        if [ "$arg" = "--json" ] || [ "$arg" = "-j" ]; then
+          output_json=true
+        else
+          positional_hosts+=("$arg")
+        fi
+      done
+
       uuid=$(cat ${config.sops.secrets.singbox_uuid.path})
       hy2=$(cat ${config.sops.secrets.singbox_hy2_password.path})
       hy2_enc=$(printf %s "$hy2" | ${pkgs.jq}/bin/jq -sRr @uri)
       cert_sha256=$(${pkgs.openssl}/bin/openssl x509 -noout -fingerprint -sha256 -in "${certFile}" 2>/dev/null | cut -d= -f2 | tr -d :)
 
       # Discover all public IP addresses (IPv4 & IPv6)
-      if [ "$#" -gt 0 ]; then
-        hosts=("$@")
+      if [ "''${#positional_hosts[@]}" -gt 0 ]; then
+        hosts=("''${positional_hosts[@]}")
       else
         mapfile -t local_ips < <(${pkgs.iproute2}/bin/ip -j -4 addr show scope global | ${pkgs.jq}/bin/jq -r '.[].addr_info[].local')
         hosts=()
@@ -93,52 +103,105 @@ in
       mapfile -t unique_hosts < <(printf "%s\n" "''${hosts[@]}" | sort -u)
 
       all_links=()
+      nodes_json_entries=()
+      sub_urls_json_entries=()
+
       for host in "''${unique_hosts[@]}"; do
         if [[ "$host" == *:* ]]; then
-          # IPv6 standard bracket formatting
           endpoint="[''${host}]"
           tag_host="''${host//:/-}"
           suffix="-IPv6-''${tag_host}"
+          sub_url="http://[''${host}]:${toString subPort}/sub/''${uuid}"
+          sub_urls_json_entries+=("\"ipv6\": \"''${sub_url}\"")
         else
           endpoint="''${host}"
           suffix=""
           if [ "''${#unique_hosts[@]}" -gt 1 ]; then
             suffix="-''${host//./-}"
           fi
+          sub_url="http://''${host}:${toString subPort}/sub/''${uuid}"
+          sub_urls_json_entries+=("\"ipv4\": \"''${sub_url}\"")
         fi
 
-        vless="vless://''${uuid}@''${endpoint}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&sid=&type=tcp#OCI-VLESS-Reality''${suffix}"
-        hy443="hysteria2://''${hy2_enc}@''${endpoint}:${toString realityPort}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-443''${suffix}"
-        hy8443="hysteria2://''${hy2_enc}@''${endpoint}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${cert_sha256}#OCI-Hysteria2-8443''${suffix}"
+        tag_vless="OCI-VLESS-Reality''${suffix}"
+        tag_hy443="OCI-Hysteria2-443''${suffix}"
+        tag_hy8443="OCI-Hysteria2-8443''${suffix}"
+
+        vless="vless://''${uuid}@''${endpoint}:${toString realityPort}?flow=xtls-rprx-vision&security=reality&sni=${realitySni}&fp=chrome&pbk=${realityPublicKey}&sid=&type=tcp#''${tag_vless}"
+        hy443="hysteria2://''${hy2_enc}@''${endpoint}:${toString realityPort}/?sni=bing.com&pinSHA256=''${cert_sha256}#''${tag_hy443}"
+        hy8443="hysteria2://''${hy2_enc}@''${endpoint}:${toString hy2Port}/?sni=bing.com&pinSHA256=''${cert_sha256}#''${tag_hy8443}"
 
         all_links+=("$vless" "$hy443" "$hy8443")
 
-        echo "# [Host: ''${host}] VLESS + Reality (TCP ${toString realityPort})"
-        echo "$vless"
-        echo
-        echo "# [Host: ''${host}] Hysteria 2 (UDP ${toString realityPort})"
-        echo "$hy443"
-        echo
-        echo "# [Host: ''${host}] Hysteria 2 (UDP ${toString hy2Port})"
-        echo "$hy8443"
-        echo
+        nodes_json_entries+=(
+          "{\"tag\": \"''${tag_vless}\", \"type\": \"vless\", \"protocol\": \"tcp\", \"host\": \"''${host}\", \"port\": ${toString realityPort}, \"url\": \"''${vless}\"}"
+          "{\"tag\": \"''${tag_hy443}\", \"type\": \"hysteria2\", \"protocol\": \"udp\", \"host\": \"''${host}\", \"port\": ${toString realityPort}, \"url\": \"''${hy443}\"}"
+          "{\"tag\": \"''${tag_hy8443}\", \"type\": \"hysteria2\", \"protocol\": \"udp\", \"host\": \"''${host}\", \"port\": ${toString hy2Port}, \"url\": \"''${hy8443}\"}"
+        )
       done
 
-      # Export base64 subscription file
+      # Export base64 subscription file for Caddy
       mkdir -p "${subDir}"
       printf "%s\n" "''${all_links[@]}" | ${pkgs.coreutils}/bin/base64 -w0 > "${subDir}/''${uuid}"
       chmod 644 "${subDir}/''${uuid}"
 
-      echo "=================================================="
-      echo "  📱 客户端订阅链接 (通用 Base64):"
-      for h in "''${unique_hosts[@]}"; do
-        if [[ "$h" == *:* ]]; then
-          echo "  • IPv6: http://[''${h}]:${toString subPort}/sub/''${uuid}"
-        else
-          echo "  • IPv4: http://''${h}:${toString subPort}/sub/''${uuid}"
-        fi
-      done
-      echo "=================================================="
+      if [ "$output_json" = true ]; then
+        # Structured JSON output
+        sub_obj="{"$(IFS=,; echo "''${sub_urls_json_entries[*]}")"}"
+        nodes_arr="["$(IFS=,; echo "''${nodes_json_entries[*]}")"]"
+        ${pkgs.jq}/bin/jq -n \
+          --arg uuid "$uuid" \
+          --argjson sub "$sub_obj" \
+          --argjson nodes "$nodes_arr" \
+          '{
+            uuid: $uuid,
+            subscription_urls: $sub,
+            node_count: ($nodes | length),
+            nodes: $nodes
+          }'
+      else
+        # Beautiful human-readable CLI formatting
+        echo "┌───────────────────────────────────────────────────────────────┐"
+        echo "│                  🚀 Sing-Box Node Manager                     │"
+        echo "└───────────────────────────────────────────────────────────────┘"
+        echo
+        echo "📡 客户端订阅链接 (通用 Base64 格式，支持 v2rayN / 小火箭 等):"
+        for h in "''${unique_hosts[@]}"; do
+          if [[ "$h" == *:* ]]; then
+            printf "  • [IPv6] http://[''${h}]:%s/sub/%s\n" "${toString subPort}" "$uuid"
+          else
+            printf "  • [IPv4] http://''${h}:%s/sub/%s\n" "${toString subPort}" "$uuid"
+          fi
+        done
+        echo
+        echo "─────────────────────────────────────────────────────────────────"
+        echo "📋 单节点配置直连列表 (共 ''${#all_links[@]} 个节点):"
+        echo "─────────────────────────────────────────────────────────────────"
+
+        for host in "''${unique_hosts[@]}"; do
+          ip_type="IPv4"
+          if [[ "$host" == *:* ]]; then
+            ip_type="IPv6"
+          fi
+          echo
+          echo "🌐 Host [$ip_type]: $host"
+          echo "  ├─ VLESS-Reality (TCP ${toString realityPort}):"
+          vless_link=$(printf "%s\n" "''${all_links[@]}" | grep -F "@" | grep -F "$host" | grep "vless" | head -n1 || true)
+          echo "     $vless_link"
+          echo
+          echo "  ├─ Hysteria 2 (UDP ${toString realityPort}):"
+          hy443_link=$(printf "%s\n" "''${all_links[@]}" | grep -F "@" | grep -F "$host" | grep "hysteria2" | grep ":${toString realityPort}/" | head -n1 || true)
+          echo "     $hy443_link"
+          echo
+          echo "  └─ Hysteria 2 (UDP ${toString hy2Port}):"
+          hy8443_link=$(printf "%s\n" "''${all_links[@]}" | grep -F "@" | grep -F "$host" | grep "hysteria2" | grep ":${toString hy2Port}/" | head -n1 || true)
+          echo "     $hy8443_link"
+        done
+        echo
+        echo "─────────────────────────────────────────────────────────────────"
+        echo "💡 提示: 可通过执行 'singbox-links --json' 获取标准结构化 JSON 输出"
+        echo
+      fi
     '')
   ];
 
