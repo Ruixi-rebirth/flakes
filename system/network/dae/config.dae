@@ -48,7 +48,6 @@ dns {
         request {
             # Lookup China mainland domains using alidns, otherwise googledns.
             qname(geosite:cn) -> alidns
-            qname(namesilo.com) -> alidns
             # fallback is also called default.
             fallback: googledns
         }
@@ -95,7 +94,6 @@ routing {
 
     dip(geoip:cn) -> direct
     domain(geosite:cn) -> direct
-    domain(namesilo.com) -> direct
 
     fallback: proxy
 }

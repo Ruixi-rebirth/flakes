@@ -94,7 +94,7 @@
 
   services.singbox-sub = {
     enable = true;
-    publicDomain = "fq.ruixi2fp.top";
+    publicDomain = "fq.${me.domain}";
   };
 
   services.daidai = {
