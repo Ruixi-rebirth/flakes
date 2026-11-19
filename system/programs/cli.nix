@@ -36,5 +36,6 @@
       just
       android-tools
       nixfmt
+      ripgrep
     ]);
 }
