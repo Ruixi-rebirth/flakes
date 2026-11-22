@@ -232,11 +232,11 @@
         "nixpkgs": "nixpkgs_5"
       },
       "locked": {
-        "lastModified": 1795334008,
-        "narHash": "sha256-uyxT9w65ZS1El/JHcvmVk0pqV6cFM/xCyZ/gWD3DKzA=",
+        "lastModified": 1795334119,
+        "narHash": "sha256-TvzQ9YqnwIBSzaYaGveFLHJRtOCnEPTn18TVgPFga04=",
         "owner": "Ruixi-rebirth",
         "repo": "daidai",
-        "rev": "ff8468ea349b8e2b981ff8ea809325801a5e0f61",
+        "rev": "2c0fc1e4481c52f0e8127c909960d4106ae1701b",
         "type": "github"
       },
       "original": {
