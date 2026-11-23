@@ -18,6 +18,7 @@
       atool
       unzip
       zip
+      btop
     ])
     ++ (pkgs.lib.optional (pkgs.stdenv.hostPlatform.isx86_64) pkgs.rar)
     ++ (with pkgs; [
