@@ -1,2 +1,2 @@
-- 更新系统或 `daidai` 时，先执行 `nixos-rebuild build --flake .#$(hostname)` 验证通过，再用 `sudo systemd-run --working-directory="$PWD" --setenv="PATH=$PATH" "$(command -v nixos-rebuild)" switch --flake .#$(hostname)` 脱离服务 cgroup 切换。
+- 更新系统时，先执行 `nixos-rebuild build --flake .#$(hostname)` 验证通过，再用 `sudo systemd-run --working-directory="$PWD" --setenv="PATH=$PATH" "$(command -v nixos-rebuild)" switch --flake .#$(hostname)` 脱离服务 cgroup 切换。
 - 除非明确授权走 `nix develop .#secret`（sops）静默修改，否则严禁查看、解密或打印 `secrets/secrets.yaml` 明文内容。
